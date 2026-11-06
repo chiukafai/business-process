@@ -108,7 +108,7 @@ def _read_form(form, db=None, rec=None):
     """
     errors = []
 
-    # 名称清理：清掉末尾的括号备注（如「广州御品鲜（无票）」→「广州御品鲜」）
+    # 名称清理：清掉末尾的括号备注（如「粤丰果业（无票）」→「粤丰果业」）
     customer_name = clean_company_name(form.get("customer_name"))
     customer_id = None
     raw_cid = (form.get("customer_id") or "").strip()
