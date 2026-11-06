@@ -1,0 +1,22 @@
+services:
+  biz-registry:
+    build: .
+    image: hailu-biz-registry:latest
+    container_name: hailu-biz-registry
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      # 数据库、密钥全部落在宿主机 ./data，迁移和备份只需拷这个目录
+      - ./data:/data
+    environment:
+      DATA_DIR: /data
+      # 生产建议显式设置，避免容器重建后所有人掉登录
+      # SECRET_KEY: "换成一段 64 位随机字符串"
+      # 走 Cloudflare 隧道（HTTPS）后建议打开，防止 Cookie 明文传输
+      COOKIE_SECURE: "0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

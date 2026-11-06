@@ -1,0 +1,38 @@
+# ---------- 数据与密钥：含真实客户档案、密码哈希，绝不入库 ----------
+data/
+data_tpl/
+data_test*/
+backups/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+secret.key
+
+# ---------- 真实业务模板与导出（含客户名、金额） ----------
+业务登记模板*.xlsx
+客户模板.xlsx
+~$*
+exports/
+
+# ---------- 截图与临时产物 ----------
+preview-*.png
+shots/
+*.jpg
+*.png
+!static/**/*.png
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# ---------- 工具与编辑器 ----------
+.workbuddy/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

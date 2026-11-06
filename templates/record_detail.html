@@ -1,0 +1,402 @@
+{% extends "base.html" %}
+{% block title %}{{ rec.customer_name }}{% endblock %}
+{% block page_title %}业务详情 #{{ rec.id }}{% endblock %}
+
+{% block topbar_actions %}
+  <a class="btn btn-sm" href="{{ url_for('records.index') }}">← 返回列表</a>
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="card-body">
+    <div class="detail-head">
+      <div>
+        <div class="detail-title">{{ rec.customer_name }}</div>
+        <div class="detail-sub">
+          <span class="tag tag-{{ rec.status }}">{{ status_label(rec.status) }}</span>
+          <span style="margin-left:8px">{{ rec.dept_name or '' }}</span>
+          {% if rec.biz_type %}<span> · {{ rec.biz_type }}</span>{% endif %}
+          <span> · {{ rec.biz_date | monthlabel }}</span>
+          <span> · 登记人 {{ rec.owner_name or '' }}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        {% if actions.can_edit %}
+        <a class="btn btn-sm" href="{{ url_for('records.edit', record_id=rec.id) }}">编辑</a>
+        {% endif %}
+        {% if actions.can_submit %}
+        <form method="post" action="{{ url_for('records.submit', record_id=rec.id) }}"
+              data-confirm="提交后进入待收款，由业务员跟进收取客户款项。确认提交？">
+          <button class="btn btn-sm btn-primary" type="submit">提交并进入收款</button>
+        </form>
+        {% endif %}
+        {% if actions.can_withdraw %}
+        <form method="post" action="{{ url_for('records.withdraw', record_id=rec.id) }}"
+              data-confirm="撤回后回到草稿，待收款清单里会消失。确认撤回？">
+          <button class="btn btn-sm" type="submit">撤回修改</button>
+        </form>
+        {% endif %}
+        {% if actions.can_receive %}
+        <a class="btn btn-sm btn-ok" href="#receiptCard">登记收款</a>
+        {% endif %}
+        {% if actions.can_reject %}
+        <button class="btn btn-sm btn-danger" type="button" onclick="openDialog('dlgReject')">退回修改</button>
+        {% endif %}
+        {% if actions.can_reopen %}
+        <button class="btn btn-sm" type="button" onclick="openDialog('dlgReopen')">撤销完成</button>
+        {% endif %}
+        {% if actions.can_delete %}
+        <form method="post" action="{{ url_for('records.delete', record_id=rec.id) }}"
+              data-confirm="删除后无法恢复，流程日志与回单附件会一并清除。确认删除这笔业务？">
+          <button class="btn btn-sm btn-danger" type="submit">删除</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if rec.status == 'rejected' and rec.reject_reason %}
+  <div class="card-body" style="padding-top:0">
+    <div class="flash flash-error" style="margin:0">
+      <strong>被财务退回：</strong>{{ rec.reject_reason }}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="kv-grid">
+    <div class="kv money"><div class="k">业务金额</div><div class="v">{{ money(rec.biz_amount_cents) }}</div></div>
+    <div class="kv money"><div class="k">公司实收</div><div class="v">{{ money(rec.company_income_cents) }}</div></div>
+    <div class="kv money {% if rec.unpaid_amount_cents < 0 %}neg{% endif %}">
+      <div class="k">待收金额</div><div class="v">{{ money(rec.unpaid_amount_cents) }}</div>
+    </div>
+    <div class="kv"><div class="k">费率</div><div class="v">{{ rec.fee_rate }}%</div></div>
+    <div class="kv money"><div class="k">渠道提成</div><div class="v">{{ money(rec.channel_commission_cents) }}</div></div>
+    <div class="kv money"><div class="k">辅助核算费用</div><div class="v">{{ money(rec.aux_fee_cents) }}</div></div>
+    <div class="kv money"><div class="k">应收金额</div><div class="v">{{ money(rec.payable_amount_cents) }}</div></div>
+    <div class="kv money"><div class="k">预存金额</div><div class="v">{{ money(rec.prepaid_amount_cents) }}</div></div>
+    <div class="kv money"><div class="k">已收金额</div><div class="v">{{ money(rec.received_amount_cents) }}</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><div class="card-title">登记信息</div></div>
+  <div class="kv-grid">
+    <div class="kv"><div class="k">归属部门</div><div class="v">{{ rec.dept_name or '—' }}</div></div>
+    <div class="kv"><div class="k">上游公司</div><div class="v">{{ rec.upstream_company or '—' }}</div></div>
+    <div class="kv"><div class="k">类型</div><div class="v">{{ rec.biz_type or '—' }}</div></div>
+    <div class="kv"><div class="k">预存与否</div><div class="v">{{ rec.prepaid_mode or '—' }}</div></div>
+    <div class="kv"><div class="k">月份</div><div class="v">{{ rec.biz_date | monthlabel or '—' }}</div></div>
+    <div class="kv"><div class="k">报送计划时间</div><div class="v">{{ rec.report_plan_date or '—' }}</div></div>
+    <div class="kv"><div class="k">计划出具日期</div><div class="v">{{ rec.issue_plan_date or '—' }}</div></div>
+    <div class="kv"><div class="k">是否开票</div><div class="v">{{ '已开票' if rec.is_invoiced else '未开票' }}</div></div>
+    <div class="kv"><div class="k">回单编号</div><div class="v">{{ rec.receipt_no or '—' }}</div></div>
+    <div class="kv"><div class="k">收款账户</div><div class="v">{{ rec.receive_account or '—' }}</div></div>
+    <div class="kv"><div class="k">收款银行</div><div class="v">{{ rec.receive_bank or '—' }}</div></div>
+    <div class="kv"><div class="k">付款账户</div><div class="v">{{ rec.pay_account or '—' }}</div></div>
+    <div class="kv"><div class="k">付款银行</div><div class="v">{{ rec.pay_bank or '—' }}</div></div>
+    <div class="kv"><div class="k">打款日期</div><div class="v">{{ rec.paid_date or '—' }}</div></div>
+    <div class="kv"><div class="k">登记时间</div><div class="v">{{ rec.created_at or '—' }}</div></div>
+    <div class="kv" style="grid-column:1/-1"><div class="k">备注</div><div class="v">{{ rec.remark or '—' }}</div></div>
+  </div>
+</div>
+
+<!-- 收款登记：可分多次收，留空=还有款没收到，填 0 = 收款完成 -->
+<div class="card" id="receiptCard">
+  <div class="card-head">
+    <div class="card-title">收款登记</div>
+    <span style="font-size:11.5px;color:var(--muted-2)">
+      {% if progress.closed %}收款已结清{% else %}可分批登记，每笔单独留痕{% endif %}
+    </span>
+  </div>
+  <div class="card-body" style="padding-bottom:6px">
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)">
+      <span>已收 {{ money(progress.prepaid + progress.received) }} / 应收 {{ money(progress.receivable) }}</span>
+      <span>{{ progress.percent }}%</span>
+    </div>
+    <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden;margin:8px 0 4px">
+      <div style="height:100%;width:{{ progress.percent }}%;border-radius:4px;
+                  background:{% if progress.closed %}#15803d{% else %}#7c3aed{% endif %}"></div>
+    </div>
+    <div style="font-size:11.5px;color:var(--muted-2)">
+      应收 = 预存 {{ money(progress.prepaid) }} + 已收 {{ money(progress.received) }} + 待收 {{ money(progress.outstanding) }}
+    </div>
+  </div>
+
+  <div class="kv-grid" style="padding:0 18px 12px">
+    <div class="kv money"><div class="k">应收金额</div><div class="v">{{ money(progress.receivable) }}</div></div>
+    <div class="kv money"><div class="k">预存抵扣</div><div class="v">{{ money(progress.prepaid) }}</div></div>
+    <div class="kv money"><div class="k">累计已收</div><div class="v">{{ money(progress.received) }}</div></div>
+    <div class="kv money {% if progress.outstanding < 0 %}neg{% endif %}">
+      <div class="k">待收金额</div><div class="v">{{ money(progress.outstanding) }}</div>
+    </div>
+  </div>
+
+  {% if actions.can_receive %}
+  <div class="card-body" style="border-top:1px solid var(--border);padding-top:14px">
+    <form method="post" action="{{ url_for('records.receipt_add', record_id=rec.id) }}">
+      <div class="form-grid four">
+        <div class="field">
+          <label>本次收款金额（元）</label>
+          <input type="text" name="received_amount" id="fRecvAmount" inputmode="decimal" class="num-input"
+                 placeholder="留空 = 未收完 / 填 0 = 收款完成">
+          <span class="hint">留空表示还有款项待收；填 0 表示收款到此结束</span>
+        </div>
+        <div class="field">
+          <label>收款日期</label>
+          <input type="date" name="received_date" id="fRecvDate" value="{{ today_str }}">
+        </div>
+        <div class="field">
+          <label>回单编号</label>
+          <input type="text" name="receipt_no" id="fRecvNo" placeholder="银行流水号 / 回单号">
+        </div>
+        <div class="field">
+          <label>备注</label>
+          <input type="text" name="note" placeholder="如 首款 / 尾款 / 客户承诺下周付">
+        </div>
+      </div>
+      <div class="form-actions" style="border:0;padding:12px 0 0;background:transparent">
+        <button class="btn btn-primary" type="submit">登记收款</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if receipts %}
+  <div class="table-wrap" style="border-top:1px solid var(--border)">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th style="width:44px">#</th><th>收款日期</th><th class="num">金额</th>
+          <th>回单编号</th><th>说明</th><th>登记人</th>
+          {% if can('record.pay') %}<th style="width:70px">操作</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in receipts %}
+        <tr>
+          <td style="color:var(--muted)">{{ loop.index }}</td>
+          <td style="white-space:nowrap">{{ it.received_date or '—' }}</td>
+          <td class="num">
+            {% if it.is_close %}<span class="tag tag-completed">结清</span>
+            {% elif it.amount_cents %}{{ money(it.amount_cents) }}
+            {% else %}<span style="color:var(--muted-2)">未收款</span>{% endif %}
+          </td>
+          <td>{{ it.receipt_no or '—' }}</td>
+          <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+              title="{{ it.note or '' }}">{{ it.note or '—' }}</td>
+          <td style="white-space:nowrap;color:var(--muted)">{{ it.actor_name or '—' }}</td>
+          {% if can('record.pay') %}
+          <td>
+            <form method="post"
+                  action="{{ url_for('records.receipt_remove', record_id=rec.id, receipt_id=it.id) }}"
+                  data-confirm="删除这条收款记录？累计已收与业务状态会一起重算。">
+              <button class="btn btn-sm btn-danger" type="submit">删除</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% elif not actions.can_receive %}
+  <div class="card-body" style="border-top:1px solid var(--border);color:var(--muted);font-size:12.5px">
+    还没有收款记录。
+  </div>
+  {% endif %}
+</div>
+
+<!-- 费用登记：收到款项后由财务按四项填列 -->
+<div class="card">
+  <div class="card-head">
+    <div class="card-title">费用登记</div>
+    <span style="font-size:11.5px;color:var(--muted-2)">
+      {% if rec.fee_registered_at %}最近登记 {{ rec.fee_registered_at }} · {{ rec.fee_registered_by or '' }}
+      {% else %}收到款项后登记，各项单独填列{% endif %}
+    </span>
+  </div>
+
+  {% if actions.can_fee %}
+  <div class="card-body">
+    <form method="post" action="{{ url_for('records.fee_update', record_id=rec.id) }}">
+      <div class="form-grid four">
+        {% for field, label, col in FEE_TYPES %}
+        <div class="field">
+          <label>{{ label }}（元）</label>
+          <input type="number" step="0.01" min="0" name="{{ field }}" class="num-input"
+                 value="{{ to_yuan_text(rec[col]) }}" placeholder="0.00">
+        </div>
+        {% endfor %}
+      </div>
+      <div class="form-actions" style="border:0;padding:12px 0 0;background:transparent">
+        <span style="margin-right:auto;font-size:11.5px;color:var(--muted-2)">
+          费用合计 {{ money(fee_total(rec)) }} 元 · 暂只登记，不参与金额计算
+        </span>
+        <button class="btn btn-primary" type="submit">保存费用</button>
+      </div>
+    </form>
+  </div>
+  {% else %}
+  <div class="kv-grid">
+    {% for label, cents in fee_items(rec) %}
+    <div class="kv money"><div class="k">{{ label }}</div><div class="v">{{ money(cents) }}</div></div>
+    {% endfor %}
+    <div class="kv money"><div class="k">费用合计</div><div class="v">{{ money(fee_total(rec)) }}</div></div>
+  </div>
+  {% if rec.status != 'completed' %}
+  <div class="card-body" style="padding-top:0;font-size:12px;color:var(--muted-2)">
+    收到款项后由财务登记费用。
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+
+<!-- 回单：附件 + 识别 -->
+{% if can('record.pay') or rec.receipt_file %}
+<div class="card">
+  <div class="card-head">
+    <div class="card-title">银行回单</div>
+    {% if rec.receipt_file %}
+    <a class="btn btn-sm" href="{{ url_for('records.receipt_download', record_id=rec.id) }}" target="_blank">查看原图</a>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if rec.receipt_file %}
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px">
+        已上传 · 识别时间 {{ rec.receipt_ocr_at or '未识别' }}
+        {% if not suggestions %}<span style="color:#b45309">（未取到可用的回单编号/金额/日期）</span>{% endif %}
+      </div>
+    {% endif %}
+
+    {% if can('record.pay') %}
+    <form method="post" action="{{ url_for('records.receipt_upload', record_id=rec.id) }}"
+          enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input type="file" name="receipt_file" accept=".jpg,.jpeg,.png,.bmp,.webp,.pdf" required>
+      <button class="btn btn-primary btn-sm" type="submit">上传回单{% if ocr_status.ok %}并识别{% endif %}</button>
+      {% if not ocr_status.ok %}
+      <span class="hint" style="color:#b45309">{{ ocr_status.reason }}</span>
+      {% endif %}
+    </form>
+    {% if rec.receipt_file %}
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <form method="post" action="{{ url_for('records.receipt_reocr', record_id=rec.id) }}">
+        <button class="btn btn-sm" type="submit">重新识别</button>
+      </form>
+      <form method="post" action="{{ url_for('records.receipt_delete', record_id=rec.id) }}"
+            data-confirm="删除后回单原图与识别结果都会清空，需要时请重新上传。确认删除？">
+        <button class="btn btn-sm btn-danger" type="submit">删除回单</button>
+      </form>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    {% if suggestions %}
+    <div class="suggest-box">
+      <div class="suggest-title">识别建议（仅供核对，点「填入收款表单」才生效）</div>
+      <div class="suggest-grid">
+        {% if suggestions.receipt_no %}<div><span class="sk">回单编号</span><b>{{ suggestions.receipt_no }}</b></div>{% endif %}
+        {% if suggestions.amount %}<div><span class="sk">金额</span><b>{{ suggestions.amount }}</b></div>{% endif %}
+        {% if suggestions.date %}<div><span class="sk">日期</span><b>{{ suggestions.date }}</b></div>{% endif %}
+        {% if suggestions.account %}<div><span class="sk">账号</span><b>{{ suggestions.account }}</b></div>{% endif %}
+      </div>
+      {% if can('record.pay') %}
+      <button class="btn btn-sm" type="button" id="btnFillSuggest"
+              data-no="{{ suggestions.receipt_no or '' }}"
+              data-amount="{{ suggestions.amount or '' }}"
+              data-date="{{ suggestions.date or '' }}">填入收款表单</button>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if rec.receipt_ocr_text %}
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:12.5px;color:var(--muted)">查看识别原文</summary>
+      <pre class="ocr-raw">{{ rec.receipt_ocr_text }}</pre>
+    </details>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if actions.show_logs %}
+<div class="card">
+  <div class="card-head"><div class="card-title">流转记录</div></div>
+  <div class="card-body">
+    <div class="timeline">
+      {% set acts = {'create':'新建登记','update':'修改内容','submit':'提交（进入收款）','withdraw':'业务员撤回',
+                     'reject':'退回修改','receipt':'收款登记','fee':'费用登记','complete':'收款结清',
+                     'pay':'确认付款（旧流程）','reopen':'撤销完成',
+                     'import':'Excel 导入','approve':'审核通过（旧流程）'} %}
+      {% for l in logs %}
+      <div class="tl-item {% if loop.last %}hl{% endif %}">
+        <div class="tl-top">
+          <span class="tl-action">{{ acts.get(l.action, l.action) }}</span>
+          {% if l.to_status %}
+          <span class="tag tag-{{ l.to_status }}">{{ status_label(l.to_status) }}</span>
+          {% endif %}
+          <span class="tl-meta">{{ l.actor_name or '—' }} · {{ l.created_at }}</span>
+        </div>
+        {% if l.note %}<div class="tl-note">{{ l.note }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- 退回 -->
+<dialog id="dlgReject" style="border:0;border-radius:12px;padding:0;max-width:420px;width:92%">
+  <form method="post" action="{{ url_for('records.reject', record_id=rec.id) }}">
+    <div class="card-head"><div class="card-title">退回给登记人修改</div></div>
+    <div class="card-body">
+      <div class="field">
+        <label>退回原因<span class="req">*</span></label>
+        <textarea name="reason" required placeholder="写清楚需要对方改什么，便于一次改对"></textarea>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="button" data-close-dialog>取消</button>
+      <button class="btn btn-danger" type="submit">确认退回</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 撤销完成 -->
+<dialog id="dlgReopen" style="border:0;border-radius:12px;padding:0;max-width:420px;width:92%">
+  <form method="post" action="{{ url_for('records.reopen', record_id=rec.id) }}">
+    <div class="card-head"><div class="card-title">撤销完成状态</div></div>
+    <div class="card-body">
+      <div class="field">
+        <label>原因</label>
+        <textarea name="reason" placeholder="如：付款金额填错，需重新登记"></textarea>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="button" data-close-dialog>取消</button>
+      <button class="btn btn-danger" type="submit">确认撤销</button>
+    </div>
+  </form>
+</dialog>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var btn = document.getElementById('btnFillSuggest');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    var no = btn.getAttribute('data-no');
+    var amount = btn.getAttribute('data-amount');
+    var date = btn.getAttribute('data-date');
+    var card = document.getElementById('receiptCard');
+    if (amount) { var a = document.getElementById('fRecvAmount'); if (a) a.value = amount; }
+    if (date) { var d = document.getElementById('fRecvDate'); if (d) d.value = date; }
+    if (no) { var n = document.getElementById('fRecvNo'); if (n) n.value = no; }
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (window.wbToast) window.wbToast('已填入识别值，请核对后再提交');
+  });
+})();
+</script>
+{% endblock %}

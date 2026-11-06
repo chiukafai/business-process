@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}看板{% endblock %}
+{% block page_title %}业务看板{% endblock %}
+
+{% block topbar_actions %}
+  {% if can('record.create') %}
+  <a class="btn btn-primary btn-sm" href="{{ url_for('records.new') }}">＋ 登记业务</a>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+
+<div class="stats">
+  <div class="stat accent">
+    <div class="stat-label">本月业务金额</div>
+    <div class="stat-value">{{ money(month_stats.biz) }}</div>
+    <div class="stat-hint">{{ month }} · {{ month_stats.c }} 笔</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">本月公司实收</div>
+    <div class="stat-value">{{ money(month_stats.income) }}</div>
+    <div class="stat-hint">按费率减渠道提成计算</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">待收款总额</div>
+    <div class="stat-value {% if stats.unpaid < 0 %}neg{% endif %}">{{ money(stats.unpaid) }}</div>
+    <div class="stat-hint">全部 {{ stats.c }} 笔业务累计</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">待我处理</div>
+    <div class="stat-value {% if counts.total %}neg{% endif %}">{{ counts.total }} 笔</div>
+    <div class="stat-hint">
+      待我收款 {{ counts.receipt }} · 待修改 {{ counts.revise }}
+    </div>
+  </div>
+</div>
+
+{% if counts.total or counts.revise %}
+<a class="card" href="{{ url_for('todos.index') }}" style="display:block;margin-top:16px;padding:14px 18px;color:var(--text);border-left:3px solid #7c3aed">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <strong style="font-size:14px">你有待处理事项</strong>
+    <span style="font-size:13px;color:var(--muted)">
+      {% if counts.receipt %}待你收款 {{ counts.receipt }} 笔{% endif %}
+      {% if counts.collect %}需跟进收款 {{ counts.collect }} 笔{% endif %}
+      {% if counts.revise %}被退回待修改 {{ counts.revise }} 笔{% endif %}
+    </span>
+    <span style="margin-left:auto;font-size:12.5px;color:var(--brand-600)">去处理 →</span>
+  </div>
+</a>
+{% endif %}
+
+<div class="card" style="margin-top:16px">
+  <div class="card-head">
+    <div class="card-title">业务状态分布</div>
+    <a href="{{ url_for('records.index') }}" style="font-size:12.5px">查看全部业务 →</a>
+  </div>
+  <div class="card-body">
+    <div style="display:flex;height:10px;border-radius:999px;overflow:hidden;background:#f1f2f4">
+      {% for s in STATUS_ORDER %}
+        {% if dist[s] %}
+        <div style="width:{{ (dist[s] / dist_total * 100) | round(2) }}%;background:{{ STATUS_META[s].color }}"
+             title="{{ STATUS_META[s].label }} {{ dist[s] }} 笔"></div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px">
+      {% for s in STATUS_ORDER %}
+      <a href="{{ url_for('records.index', status=s) }}" style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-2)">
+        <i style="width:8px;height:8px;border-radius:50%;background:{{ STATUS_META[s].color }};display:inline-block"></i>
+        {{ STATUS_META[s].label }}
+        <b style="font-variant-numeric:tabular-nums">{{ dist[s] }}</b>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

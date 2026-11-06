@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}系统设置{% endblock %}
+{% block page_title %}系统设置{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="card-head">
+    <div class="card-title">企业微信通知（自建应用）</div>
+    <div style="font-size:12px;color:var(--muted)">开通后，业务提交 / 被退回 / 付款完成会自动推送到对应人员的企业微信</div>
+  </div>
+  <form method="post" action="{{ url_for('admin.settings') }}">
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="field full">
+          <label class="check">
+            <input type="checkbox" name="wecom_enabled" value="1" {% if cfg.enabled %}checked{% endif %}>
+            启用企业微信通知
+          </label>
+          <span class="hint">关闭时系统只在站内待办里提示，不发任何外部请求</span>
+        </div>
+        <div class="field">
+          <label>企业 ID（corpId）</label>
+          <input type="text" name="wecom_corp_id" value="{{ cfg.corp_id }}" placeholder="ww开头的企业ID">
+        </div>
+        <div class="field">
+          <label>应用 AgentId</label>
+          <input type="text" name="wecom_agent_id" value="{{ cfg.agent_id }}" placeholder="应用管理里的一串数字">
+        </div>
+        <div class="field full">
+          <label>应用 Secret</label>
+          <input type="text" name="wecom_secret" value="{{ cfg.secret }}" placeholder="应用详情页的 Secret">
+          <span class="hint">保存后仅用于服务端取 token，不会出现在任何页面和日志里</span>
+        </div>
+      </div>
+
+      <div style="margin-top:18px;padding:12px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:12.5px;color:#92400e;line-height:1.9">
+        <strong>接入前必须确认两件事（否则会报 60020 或 48002）</strong><br>
+        1. 企业微信后台 → 应用管理 → 你建的自建应用 → 「企业可信IP」里，必须填本系统所在服务器的<strong>公网出口 IP</strong>。<br>
+        2. 该应用的可见范围要包含需要收通知的成员，否则他们收不到消息。<br>
+        3. 当前系统跑在本机，家宽/办公网出口 IP 会变，只有部署到固定 IP 的服务器（或固定出口的云主机）后才能稳定推送。
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit">保存设置</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-head"><div class="card-title">发送测试消息</div></div>
+  <form method="post" action="{{ url_for('admin.settings_test') }}">
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="field">
+          <label>接收人企业微信 userid</label>
+          <input type="text" name="test_userid" placeholder="填你自己的 userid 先试" required>
+          <span class="hint">先保存上面的凭据，再发测试</span>
+        </div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="submit">发送测试消息</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div class="card-title">人员与通知账号对应关系</div>
+    <div style="font-size:12px;color:var(--muted)">没填 userid 的人收不到通知</div>
+  </div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>姓名</th><th>登录名</th><th>企业微信 userid</th><th>状态</th></tr></thead>
+      <tbody>
+        {% for u in wx_users %}
+        <tr>
+          <td class="cust">{{ u.name }}</td>
+          <td style="color:var(--muted)">{{ u.username }}</td>
+          <td>{{ u.wecom_userid or '—' }}</td>
+          <td>
+            {% if u.wecom_userid %}<span class="tag tag-completed">可接收</span>
+            {% else %}<span class="tag tag-draft">未填写</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body" style="font-size:12.5px;color:var(--muted)">
+    填写位置：人员与权限 → 该人员的「编辑」弹窗 → 企业微信 userid
+  </div>
+</div>
+
+{% endblock %}

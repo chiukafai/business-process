@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}人员与权限{% endblock %}
+{% block page_title %}人员与权限{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary btn-sm" type="button" onclick="openDialog('dlgNewUser')">＋ 添加人员</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="card-head">
+    <div class="card-title">在册人员 <span style="color:var(--muted);font-weight:400">({{ users|length }})</span></div>
+    <div style="font-size:12px;color:var(--muted)">点击「权限」可单独调整某人能做什么</div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>姓名</th><th>用户名</th><th>部门</th><th>角色</th>
+          <th>权限数</th><th>状态</th><th>最后登录</th><th style="width:280px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td class="cust">{{ u.name }}</td>
+          <td style="color:var(--muted)">{{ u.username }}</td>
+          <td>{{ u.dept_name or '未分配' }}</td>
+          <td><span class="pill">{{ ROLE_LABELS.get(u.role, u.role) }}</span></td>
+          <td>
+            {% if u.role == 'admin' %}全部{% else %}{{ u.perm_list|length }} 项{% endif %}
+          </td>
+          <td>
+            {% if u.is_active %}
+              <span class="tag tag-completed">启用</span>
+            {% else %}
+              <span class="tag tag-rejected">停用</span>
+            {% endif %}
+          </td>
+          <td style="color:var(--muted);white-space:nowrap">{{ u.last_login_at or '从未登录' }}</td>
+          <td>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-sm" type="button" onclick="openDialog('dlgEdit{{ u.id }}')">权限</button>
+              <form method="post" action="{{ url_for('admin.user_toggle', user_id=u.id) }}"
+                    data-confirm="{{ '停用后该账号无法登录，确认？' if u.is_active else '确认启用该账号？' }}">
+                <button class="btn btn-sm" type="submit">{{ '停用' if u.is_active else '启用' }}</button>
+              </form>
+              <button class="btn btn-sm" type="button" onclick="openDialog('dlgReset{{ u.id }}')">重置密码</button>
+              <form method="post" action="{{ url_for('admin.user_delete', user_id=u.id) }}"
+                    data-confirm="删除后账号无法恢复。若该人员名下已有业务记录，系统会拒绝删除并建议改用停用。确认删除 {{ u.name }}？">
+                <button class="btn btn-sm btn-danger" type="submit">删除</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><div class="card-title">权限说明</div></div>
+  <div class="card-body">
+    <div class="perm-groups">
+      {% for group_name, items in perm_groups %}
+      <div class="perm-group">
+        <div class="perm-group-head">{{ group_name }}</div>
+        <div class="perm-items" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+          {% for p in items %}
+          <div style="padding:3px 0">
+            <div style="font-size:12.5px;font-weight:550">{{ p.label }}</div>
+            <div style="font-size:11px;color:var(--muted-2)">{{ p.code }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- 新增人员 -->
+<dialog id="dlgNewUser" style="border:0;border-radius:12px;padding:0;max-width:620px;width:94%">
+  <form method="post" action="{{ url_for('admin.user_new') }}">
+    <div class="card-head"><div class="card-title">添加人员</div></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="field"><label>姓名<span class="req">*</span></label><input type="text" name="name" required></div>
+        <div class="field"><label>用户名<span class="req">*</span></label><input type="text" name="username" required placeholder="登录用，建议姓名拼音"></div>
+        <div class="field"><label>手机号</label><input type="tel" name="phone"></div>
+        <div class="field">
+          <label>归属部门</label>
+          <select name="dept_id">
+            <option value="">未分配</option>
+            {% for d in depts %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>角色</label>
+          <select name="role" id="roleSelect">
+            {% for k, v in ROLE_LABELS.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>初始密码</label>
+          <input type="text" name="password" value="Hailu@2026">
+          <span class="hint">对方首次登录会强制改密</span>
+        </div>
+        <div class="field">
+          <label>企业微信 userid</label>
+          <input type="text" name="wecom_userid" placeholder="用于收通知，可留空">
+          <span class="hint">企业微信通讯录里的账号，需管理员提供</span>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;display:flex;align-items:center;gap:14px">
+        <span style="font-size:12.5px;font-weight:600;color:var(--muted)">可执行的操作</span>
+        <label class="check" style="font-size:12.5px">
+          <input type="checkbox" class="perm-all"> 全选
+        </label>
+        <span class="perm-count" style="font-size:12px;color:var(--muted-2)"></span>
+      </div>
+      <div class="perm-groups" style="margin-top:8px">
+        {% for group_name, items in perm_groups %}
+        <div class="perm-group">
+          <div class="perm-group-head">{{ group_name }}</div>
+          <div class="perm-items">
+            {% for p in items %}
+            <label class="check">
+              <input type="checkbox" name="permissions" value="{{ p.code }}">
+              {{ p.label }}
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="button" data-close-dialog>取消</button>
+      <button class="btn btn-primary" type="submit">添加</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 编辑权限 -->
+{% for u in users %}
+<dialog id="dlgEdit{{ u.id }}" style="border:0;border-radius:12px;padding:0;max-width:620px;width:94%">
+  <form method="post" action="{{ url_for('admin.user_update', user_id=u.id) }}">
+    <div class="card-head"><div class="card-title">编辑 {{ u.name }}</div></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="field"><label>姓名</label><input type="text" name="name" value="{{ u.name }}" required></div>
+        <div class="field"><label>手机号</label><input type="tel" name="phone" value="{{ u.phone or '' }}"></div>
+        <div class="field">
+          <label>归属部门</label>
+          <select name="dept_id">
+            <option value="">未分配</option>
+            {% for d in depts %}
+            <option value="{{ d.id }}" {% if u.dept_id == d.id %}selected{% endif %}>{{ d.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>企业微信 userid</label>
+          <input type="text" name="wecom_userid" value="{{ u.wecom_userid or '' }}" placeholder="用于收通知，可留空">
+        </div>
+        <div class="field">
+          <label>角色</label>
+          <select name="role" class="role-select">
+            {% for k, v in ROLE_LABELS.items() %}
+            <option value="{{ k }}" {% if u.role == k %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;display:flex;align-items:center;gap:14px">
+        <span style="font-size:12.5px;font-weight:600;color:var(--muted)">可执行的操作</span>
+        <label class="check" style="font-size:12.5px">
+          <input type="checkbox" class="perm-all"> 全选
+        </label>
+        <span class="perm-count" style="font-size:12px;color:var(--muted-2)"></span>
+      </div>
+      <div class="perm-groups" style="margin-top:8px">
+        {% for group_name, items in perm_groups %}
+        <div class="perm-group">
+          <div class="perm-group-head">{{ group_name }}</div>
+          <div class="perm-items">
+            {% for p in items %}
+            <label class="check">
+              <input type="checkbox" name="permissions" value="{{ p.code }}"
+                     {% if p.code in u.perm_list %}checked{% endif %}>
+              {{ p.label }}
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="button" data-close-dialog>取消</button>
+      <button class="btn btn-primary" type="submit">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 重置密码 -->
+<dialog id="dlgReset{{ u.id }}" style="border:0;border-radius:12px;padding:0;max-width:400px;width:92%">
+  <form method="post" action="{{ url_for('admin.user_reset', user_id=u.id) }}">
+    <div class="card-head"><div class="card-title">重置 {{ u.name }} 的密码</div></div>
+    <div class="card-body">
+      <div class="field">
+        <label>新密码</label>
+        <input type="text" name="password" value="Hailu@2026">
+        <span class="hint">对方下次登录会强制重新设置</span>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="button" data-close-dialog>取消</button>
+      <button class="btn btn-primary" type="submit">确认重置</button>
+    </div>
+  </form>
+</dialog>
+{% endfor %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+window.ROLE_DEFAULTS = {{ role_defaults | tojson }};
+
+// 权限全选 / 反选，并显示已选数量
+document.querySelectorAll('dialog form').forEach(function (form) {
+  var all = form.querySelector('.perm-all');
+  var boxes = Array.prototype.slice.call(form.querySelectorAll('.perm-items input[type=checkbox]'));
+  var counter = form.querySelector('.perm-count');
+  if (!all || !boxes.length) return;
+
+  function refresh() {
+    var checked = boxes.filter(function (b) { return b.checked; }).length;
+    all.checked = checked === boxes.length;
+    all.indeterminate = checked > 0 && checked < boxes.length;
+    if (counter) counter.textContent = '已选 ' + checked + ' / ' + boxes.length + ' 项';
+  }
+
+  all.addEventListener('change', function () {
+    boxes.forEach(function (b) { b.checked = all.checked; });
+    refresh();
+  });
+  boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+  refresh();
+});
+document.querySelectorAll('.role-select').forEach(function (sel) {
+  sel.addEventListener('change', function () {
+    var defaults = window.ROLE_DEFAULTS[sel.value] || [];
+    sel.closest('form').querySelectorAll('.perm-items input[type=checkbox]').forEach(function (box) {
+      box.checked = defaults.indexOf(box.value) !== -1;
+    });
+  });
+});
+</script>
+{% endblock %}

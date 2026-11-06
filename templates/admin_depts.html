@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}部门{% endblock %}
+{% block page_title %}部门管理{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary btn-sm" type="button" onclick="openDialog('dlgNewDept')">＋ 添加部门</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="card-head">
+    <div class="card-title">部门列表</div>
+    <div style="font-size:12px;color:var(--muted)">每个部门是独立的经营主体，人员与业务都归属到部门。停用后不再出现在登记下拉框，历史数据不受影响</div>
+  </div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr><th>名称</th><th>简称</th><th>排序</th><th class="num">业务数</th><th class="num">人员数</th><th>状态</th><th style="width:200px">操作</th></tr>
+      </thead>
+      <tbody>
+        {% for d in depts %}
+        <tr>
+          <td class="cust">{{ d.name }}</td>
+          <td>{{ d.short_name or '' }}</td>
+          <td>{{ d.sort_order }}</td>
+          <td class="num">{{ d.record_count }}</td>
+          <td class="num">{{ d.user_count }}</td>
+          <td>
+            {% if d.is_active %}<span class="tag tag-completed">启用</span>
+            {% else %}<span class="tag tag-draft">停用</span>{% endif %}
+          </td>
+          <td>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-sm" type="button" onclick="openDialog('dlgEdit{{ d.id }}')">编辑</button>
+              <form method="post" action="{{ url_for('admin.dept_toggle', dept_id=d.id) }}">
+                <button class="btn btn-sm" type="submit">{{ '停用' if d.is_active else '启用' }}</button>
+              </form>
+              <form method="post" action="{{ url_for('admin.dept_delete', dept_id=d.id) }}"
+                    data-confirm="删除后无法恢复。若该部门下还有人员或业务，系统会拒绝删除并建议改用停用。确认删除「{{ d.name }}」？">
+                <button class="btn btn-sm btn-danger" type="submit">删除</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<dialog id="dlgNewDept" style="border:0;border-radius:12px;padding:0;max-width:420px;width:92%">
+  <form method="post" action="{{ url_for('admin.dept_new') }}">
+    <div class="card-head"><div class="card-title">添加部门</div></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="field full"><label>名称<span class="req">*</span></label><input type="text" name="name" required placeholder="如 广州分公司"></div>
+        <div class="field"><label>简称</label><input type="text" name="short_name" placeholder="如 广州"></div>
+        <div class="field"><label>排序</label><input type="number" name="sort_order" value="100"></div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="button" data-close-dialog>取消</button>
+      <button class="btn btn-primary" type="submit">添加</button>
+    </div>
+  </form>
+</dialog>
+
+{% for d in depts %}
+<dialog id="dlgEdit{{ d.id }}" style="border:0;border-radius:12px;padding:0;max-width:420px;width:92%">
+  <form method="post" action="{{ url_for('admin.dept_update', dept_id=d.id) }}">
+    <div class="card-head"><div class="card-title">编辑部门</div></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="field full"><label>名称</label><input type="text" name="name" value="{{ d.name }}" required></div>
+        <div class="field"><label>简称</label><input type="text" name="short_name" value="{{ d.short_name or '' }}"></div>
+        <div class="field"><label>排序</label><input type="number" name="sort_order" value="{{ d.sort_order }}"></div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="button" data-close-dialog>取消</button>
+      <button class="btn btn-primary" type="submit">保存</button>
+    </div>
+  </form>
+</dialog>
+{% endfor %}
+
+{% endblock %}

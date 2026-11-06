@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}导入客户{% endblock %}
+{% block page_title %}导入客户档案{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-sm" href="{{ url_for('customers.import_template') }}">下载导入模板</a>
+<a class="btn btn-sm" href="{{ url_for('customers.index') }}">← 返回客户档案</a>
+{% endblock %}
+
+{% block content %}
+
+{% if result %}
+<div class="card">
+  <div class="card-head">
+    <div class="card-title">导入结果 · {{ result.filename }}</div>
+    <a href="{{ url_for('customers.index') }}" class="btn btn-sm btn-primary">查看客户档案 →</a>
+  </div>
+  <div class="card-body">
+    <div class="stats" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat accent">
+        <div class="stat-label">新增客户</div>
+        <div class="stat-value">{{ result.created }}</div>
+        <div class="stat-hint">导入前档案里没有的客户</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">更新客户</div>
+        <div class="stat-value">{{ result.updated }}</div>
+        <div class="stat-hint">同名档案，用非空字段覆盖</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">跳过行数</div>
+        <div class="stat-value {% if result.skipped %}neg{% endif %}">{{ result.skipped }}</div>
+        <div class="stat-hint">未写入，可修正后重新导入</div>
+      </div>
+    </div>
+  </div>
+
+  {% if result.errors %}
+  <div class="card-head" style="border-top:1px solid var(--border)">
+    <div class="card-title" style="color:var(--warn)">跳过明细（前 200 条）</div>
+  </div>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>说明</th></tr></thead>
+      <tbody>
+        {% for e in result.errors %}
+        <tr><td style="color:var(--warn)">{{ e }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-head"><div class="card-title">{{ '继续导入' if result else '上传客户 Excel' }}</div></div>
+  <form method="post" enctype="multipart/form-data">
+    <div class="card-body">
+      <div id="dropZone" class="dz">
+        <div class="dz-ico">XLSX</div>
+        <div class="dz-main">点击选择文件，或把 Excel 拖到这里</div>
+        <div class="dz-name">支持 .xlsx 格式，单次建议不超过 2000 行</div>
+        <input type="file" name="file" id="fileInput" accept=".xlsx,.xlsm" style="display:none">
+      </div>
+
+      <div style="margin-top:18px;font-size:12.5px;color:var(--muted);line-height:1.9">
+        <strong style="color:var(--text)">导入规则</strong><br>
+        1. 必需列只有「客户名称」，其余列（主体公司 / 联系人 / 电话 / 纳税人识别号 / 开户行 / 银行账号 / 发票额度 / 地址 / 备注）按表头名称自动识别，列序不限<br>
+        2. 客户名称已存在的，用表里的非空值覆盖原档案，空单元格保留原值，不会清空<br>
+        3. 发票额度按「元」填，可写 500000 或 500,000；留空表示该行不修改额度<br>
+        4. 同一份文件里重复出现的客户名，只保留第一次出现的行<br>
+        5. 客户名称最多 100 字，超长行会被跳过并列在结果里<br>
+        6. 导入不会改动已有业务单据，只维护客户档案
+      </div>
+    </div>
+    <div class="form-actions">
+      <a class="btn" href="{{ url_for('customers.index') }}">取消</a>
+      <button class="btn btn-primary" type="submit">开始导入</button>
+    </div>
+  </form>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var dz = document.getElementById('dropZone');
+  var input = document.getElementById('fileInput');
+  if (!dz || !input) return;
+  var nameEl = dz.querySelector('.dz-name');
+  var original = nameEl.textContent;
+
+  dz.addEventListener('click', function () { input.click(); });
+  input.addEventListener('change', function () {
+    nameEl.textContent = input.files.length ? input.files[0].name : original;
+  });
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.add('dragging'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.remove('dragging'); });
+  });
+  dz.addEventListener('drop', function (e) {
+    if (e.dataTransfer.files.length) {
+      input.files = e.dataTransfer.files;
+      nameEl.textContent = e.dataTransfer.files[0].name;
+    }
+  });
+})();
+</script>
+{% endblock %}

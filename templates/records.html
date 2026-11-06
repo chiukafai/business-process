@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}业务列表{% endblock %}
+{% block page_title %}业务列表{% endblock %}
+
+{% block topbar_actions %}
+  {% if can('record.create') %}
+  <a class="btn btn-primary btn-sm" href="{{ url_for('records.new') }}">＋ 登记业务</a>
+  {% endif %}
+{% endblock %}
+
+{% macro page_url(p) -%}
+{{ url_for('records.index') }}?{% for k, vals in request.args.lists() if k != 'page' %}{% for v in vals %}{{ k }}={{ v|urlencode }}&{% endfor %}{% endfor %}page={{ p }}
+{%- endmacro %}
+
+{% block content %}
+
+<div class="card">
+  <form class="filters" method="get">
+    <div class="field grow">
+      <label>关键字</label>
+      <input type="text" name="kw" value="{{ kw }}" placeholder="客户名称 / 回单编号 / 备注">
+    </div>
+    <div class="field">
+      <label>部门</label>
+      <select name="dept">
+        <option value="">全部</option>
+        {% for d in depts %}
+        <option value="{{ d.id }}" {% if f_dept|string == d.id|string %}selected{% endif %}>{{ d.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>月份从</label>
+      <input type="month" name="from" value="{{ f_from }}">
+    </div>
+    <div class="field">
+      <label>到</label>
+      <input type="month" name="to" value="{{ f_to }}">
+    </div>
+    <button class="btn btn-primary" type="submit">查询</button>
+    <a class="btn" href="{{ url_for('records.index') }}">重置</a>
+  </form>
+
+  <div class="filters" style="border-bottom:1px solid var(--border)">
+    <form method="get" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%">
+      {% for k, vals in request.args.lists() if k not in ['status','page'] %}{% for v in vals %}
+        <input type="hidden" name="{{ k }}" value="{{ v }}">
+      {% endfor %}{% endfor %}
+      <div class="chips">
+        {% for s in STATUS_ORDER %}
+        <label class="chip {% if s in f_status %}on{% endif %}">
+          <input type="checkbox" name="status" value="{{ s }}" {% if s in f_status %}checked{% endif %}>
+          {{ STATUS_META[s].label }}
+        </label>
+        {% endfor %}
+      </div>
+      <button class="btn btn-sm" type="submit">按状态筛选</button>
+      {% if f_status %}<a class="btn btn-sm btn-ghost" href="{{ url_for('records.index') }}">清除状态</a>{% endif %}
+      <div style="margin-left:auto;display:flex;gap:8px">
+        {% if can('record.export') %}
+        <a class="btn btn-sm"
+           href="{{ url_for('excel.export') }}?{{ request.query_string.decode('utf-8') }}"
+           data-confirm="将导出当前筛选结果的 {{ total }} 条记录，确认？">导出 Excel</a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+
+  <div class="filters" style="border-bottom:0;background:var(--surface-2);padding:10px 18px">
+    <div style="font-size:12.5px;color:var(--muted);display:flex;gap:20px;flex-wrap:wrap">
+      <span>共 <b style="color:var(--text)">{{ total }}</b> 条</span>
+      <span>业务金额合计 <b style="color:var(--text)">{{ money(summary.biz) }}</b></span>
+      <span>公司实收合计 <b style="color:var(--text)">{{ money(summary.income) }}</b></span>
+      <span>待收合计 <b class="{% if summary.unpaid < 0 %}neg{% endif %}">{{ money(summary.unpaid) }}</b></span>
+    </div>
+  </div>
+
+  {% if rows %}
+  <form id="batchForm" method="post" action="{{ url_for('records.batch_delete') }}">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <div class="bulkbar" id="bulkbar">
+      <label class="ck"><input type="checkbox" class="js-check-all"> 全选本页</label>
+      <button class="btn btn-sm btn-ghost" type="button" id="invertSel">反选</button>
+      <span class="bulk-count">已选 <b id="selCount">0</b> 项</span>
+      <span class="bulk-hint" id="selHint">勾选后可整批处理，不必逐条打开</span>
+      <span class="bulk-actions">
+        <button class="btn btn-sm" type="button" id="clearSel" disabled>清除选择</button>
+        <button class="btn btn-sm btn-primary" type="submit" id="bulkSubmit" disabled
+                formaction="{{ url_for('records.batch_submit') }}"
+                data-bulk-action="submit"
+                data-confirm-tpl="将选中的 {n} 条业务提交，进入待收款（由业务员跟进收取客户款项），确认？">批量提交收款</button>
+        <button class="btn btn-sm btn-danger" type="submit" id="bulkDelete" disabled
+                data-bulk-action="delete"
+                data-confirm-tpl="删除后不可恢复，流程日志与回单附件会一并清除。确认删除选中的 {n} 条业务？">批量删除</button>
+      </span>
+    </div>
+  </form>
+
+  <!-- PC 表格 -->
+  <div class="table-wrap records-table">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th class="ck-cell"><input type="checkbox" class="js-check-all" title="全选本页"></th>
+          <th>序号</th><th>状态</th><th>客户名称</th><th>上游公司</th><th>部门</th><th>类型</th>
+          <th>月份</th><th class="num">业务金额</th><th class="num">公司实收</th>
+          <th class="num">待收</th><th>登记人</th><th>更新时间</th>
+          <th style="width:70px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        {% set del_ok = can_delete_record(current_user, r) %}
+        {% set can_submit_row = r.owner_id == current_user.id and r.status in ('draft','rejected') %}
+        <tr class="clickable" data-href="{{ url_for('records.detail', record_id=r.id) }}">
+          <td class="ck-cell">
+            <input type="checkbox" class="row-check" form="batchForm" name="ids" value="{{ r.id }}"
+                   {% if not del_ok and not can_submit_row %}disabled title="这条业务你没有可批量操作的权限"{% endif %}>
+          </td>
+          <td style="color:var(--muted)">{{ r.id }}</td>
+          <td><span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span></td>
+          <td class="cust">{{ r.customer_name }}</td>
+          <td style="color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+              title="{{ r.upstream_company or '' }}">{{ r.upstream_company or '—' }}</td>
+          <td>{{ r.dept_name or '' }}</td>
+          <td>{{ r.biz_type or '' }}</td>
+          <td style="white-space:nowrap">{{ r.biz_date | monthlabel }}</td>
+          <td class="num">{{ money(r.biz_amount_cents) }}</td>
+          <td class="num">{{ money(r.company_income_cents) }}</td>
+          <td class="num {% if r.unpaid_amount_cents < 0 %}neg{% endif %}"
+              title="应收 {{ money(r.payable_amount_cents) }} / 已收 {{ money(r.received_amount_cents) }}">
+            {{ money(r.unpaid_amount_cents) }}
+          </td>
+          <td>{{ r.owner_name or '' }}</td>
+          <td style="color:var(--muted);white-space:nowrap">{{ r.updated_at | shortdt }}</td>
+          <td>
+            {% if del_ok %}
+            <form method="post" action="{{ url_for('records.delete', record_id=r.id) }}"
+                  data-confirm="删除后不可恢复，流程日志与回单附件会一并清除。确认删除 #{{ r.id }} {{ r.customer_name }}？">
+              <button class="btn btn-sm btn-danger" type="submit">删除</button>
+            </form>
+            {% else %}
+            <button class="btn btn-sm" type="button" disabled
+                    title="仅登记人可删除自己的草稿，其他人需要「删除业务」权限">删除</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 手机卡片 -->
+  <div class="rec-cards" style="padding:12px">
+    {% for r in rows %}
+    {% set del_ok = can_delete_record(current_user, r) %}
+    {% set can_submit_row = r.owner_id == current_user.id and r.status in ('draft','rejected') %}
+    <div class="rec-card-item">
+      <div class="rc-select">
+        <input type="checkbox" class="row-check" form="batchForm" name="ids" value="{{ r.id }}"
+               {% if not del_ok and not can_submit_row %}disabled{% endif %}>
+      </div>
+      <a class="rec-card" href="{{ url_for('records.detail', record_id=r.id) }}">
+        <div class="rc-top">
+          <span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span>
+          <span class="rc-cust">{{ r.customer_name }}</span>
+          <span style="color:var(--muted-2);font-size:11.5px">#{{ r.id }}</span>
+        </div>
+        <div class="rc-mid">
+          <div><label>业务金额</label><b>{{ money(r.biz_amount_cents) }}</b></div>
+          <div><label>公司实收</label><b>{{ money(r.company_income_cents) }}</b></div>
+          <div><label>待收</label><b class="{% if r.unpaid_amount_cents < 0 %}neg{% endif %}">{{ money(r.unpaid_amount_cents) }}</b></div>
+        </div>
+        <div class="rc-bottom">
+          {{ r.dept_name or '' }}{% if r.upstream_company %} · 上游 {{ r.upstream_company }}{% endif %}{% if r.biz_type %} · {{ r.biz_type }}{% endif %} · {{ r.biz_date | monthlabel }} · {{ r.owner_name or '' }}
+        </div>
+      </a>
+      {% if del_ok %}
+      <form method="post" action="{{ url_for('records.delete', record_id=r.id) }}"
+            data-confirm="删除后不可恢复，流程日志与回单附件会一并清除。确认删除 #{{ r.id }} {{ r.customer_name }}？"
+            style="text-align:right;margin-top:6px">
+        <button class="btn btn-sm btn-danger" type="submit">删除</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="pager">
+    <div class="pager-info">第 {{ page }} / {{ pages }} 页</div>
+    <div class="pager-links">
+      {% if page > 1 %}<a class="btn btn-sm" href="{{ page_url(page - 1) }}">上一页</a>{% endif %}
+      {% if page < pages %}<a class="btn btn-sm" href="{{ page_url(page + 1) }}">下一页</a>{% endif %}
+    </div>
+  </div>
+
+  {% else %}
+  <div class="empty">
+    <div class="ico">—</div>
+    <div class="txt">
+      {% if f_status or f_dept or f_from or f_to or kw %}
+        没有符合条件的结果，试试放宽筛选
+      {% else %}
+        还没有业务记录{% if can('record.create') %}，点右上角「登记业务」开始{% endif %}
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

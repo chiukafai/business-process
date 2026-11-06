@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}操作日志{% endblock %}
+{% block page_title %}操作日志{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-sm" href="{{ url_for('admin.logs_export') }}?{{ request.query_string.decode('utf-8') }}">导出 Excel</a>
+{% endblock %}
+
+{% macro page_url(p) -%}
+{{ url_for('admin.logs') }}?{% for k, vals in request.args.lists() if k != 'page' %}{% for v in vals %}{{ k }}={{ v|urlencode }}&{% endfor %}{% endfor %}page={{ p }}
+{%- endmacro %}
+
+{% block content %}
+
+<div class="card">
+  <div class="card-head">
+    <div class="card-title">全站操作留痕</div>
+    <div style="font-size:12px;color:var(--muted)">仅管理员可见，看板「最近动态」已按你的要求关闭</div>
+  </div>
+
+  <form class="filters" method="get">
+    <div class="field grow">
+      <label>关键字</label>
+      <input type="text" name="kw" value="{{ request.args.get('kw', '') }}" placeholder="客户名称 / 说明 / 业务单号">
+    </div>
+    <div class="field">
+      <label>动作</label>
+      <select name="action">
+        <option value="">全部</option>
+        {% for k, v in action_labels.items() %}
+        <option value="{{ k }}" {% if request.args.get('action') == k %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>操作人</label>
+      <input type="text" name="actor" value="{{ request.args.get('actor', '') }}" placeholder="姓名">
+    </div>
+    <div class="field">
+      <label>从</label>
+      <input type="date" name="from" value="{{ request.args.get('from', '') }}">
+    </div>
+    <div class="field">
+      <label>到</label>
+      <input type="date" name="to" value="{{ request.args.get('to', '') }}">
+    </div>
+    <button class="btn btn-primary" type="submit">查询</button>
+    <a class="btn" href="{{ url_for('admin.logs') }}">重置</a>
+  </form>
+
+  <div class="filters" style="border-bottom:0;background:var(--surface-2);padding:10px 18px">
+    <div style="font-size:12.5px;color:var(--muted)">共 <b style="color:var(--text)">{{ total }}</b> 条记录</div>
+  </div>
+
+  {% if rows %}
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>时间</th><th>业务单号</th><th>客户名称</th><th class="num">业务金额</th>
+          <th>动作</th><th>状态变化</th><th>操作人</th><th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td style="color:var(--muted);white-space:nowrap">{{ r.created_at }}</td>
+          <td>
+            {% if r.record_id %}
+            <a href="{{ url_for('records.detail', record_id=r.record_id) }}">#{{ r.record_id }}</a>
+            {% else %}—{% endif %}
+          </td>
+          <td class="cust">{{ r.customer_name or '—' }}</td>
+          <td class="num">{% if r.biz_amount_cents is not none %}{{ money(r.biz_amount_cents) }}{% else %}—{% endif %}</td>
+          <td><span class="pill">{{ action_labels.get(r.action, r.action) }}</span></td>
+          <td style="font-size:12px;color:var(--muted);white-space:nowrap">
+            {{ status_label(r.from_status) or '—' }} → {{ status_label(r.to_status) or '—' }}
+          </td>
+          <td>{{ r.actor_name or '—' }}</td>
+          <td style="color:var(--muted);max-width:340px">{{ r.note or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pager">
+    <div class="pager-info">第 {{ page }} / {{ pages }} 页</div>
+    <div class="pager-links">
+      {% if page > 1 %}<a class="btn btn-sm" href="{{ page_url(page - 1) }}">上一页</a>{% endif %}
+      {% if page < pages %}<a class="btn btn-sm" href="{{ page_url(page + 1) }}">下一页</a>{% endif %}
+    </div>
+  </div>
+  {% else %}
+  <div class="empty">
+    <div class="ico">—</div>
+    <div class="txt">没有符合条件的日志</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}客户档案{% endblock %}
+{% block page_title %}客户档案{% endblock %}
+
+{% block topbar_actions %}
+  {% if can('customer.manage') %}
+  <a class="btn btn-sm" href="{{ url_for('customers.import_page') }}">导入客户</a>
+  <button class="btn btn-primary btn-sm" type="button" onclick="openDialog('dlgNewCustomer')">＋ 新增客户</button>
+  {% endif %}
+{% endblock %}
+
+{% macro page_url(p) -%}
+{{ url_for('customers.index') }}?{% for k, vals in request.args.lists() if k != 'page' %}{% for v in vals %}{{ k }}={{ v|urlencode }}&{% endfor %}{% endfor %}page={{ p }}
+{%- endmacro %}
+
+{% block content %}
+
+<div class="card">
+  <form class="filters" method="get">
+    <div class="field grow">
+      <label>关键字</label>
+      <input type="text" name="kw" value="{{ kw }}" placeholder="客户名称 / 主体公司 / 联系人 / 电话">
+    </div>
+    <div class="field">
+      <label class="check" style="height:36px">
+        <input type="checkbox" name="inactive" value="1" {% if not only_active %}checked{% endif %}>
+        含已停用
+      </label>
+    </div>
+    <button class="btn btn-primary" type="submit">查询</button>
+    <a class="btn" href="{{ url_for('customers.index') }}">重置</a>
+  </form>
+
+  <div class="filters" style="border-bottom:0;background:var(--surface-2);padding:10px 18px">
+    <div style="font-size:12.5px;color:var(--muted);display:flex;gap:20px;flex-wrap:wrap">
+      <span>共 <b style="color:var(--text)">{{ total }}</b> 家客户</span>
+      <span>不再合作的客户建议停用，历史业务数据不受影响</span>
+    </div>
+  </div>
+
+  {% if rows %}
+  {% set may_manage = can('customer.manage') %}
+  <form id="batchForm" method="post" action="{{ url_for('customers.batch') }}">
+    <input type="hidden" name="action" value="">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <div class="bulkbar" id="bulkbar">
+      <label class="ck"><input type="checkbox" class="js-check-all"> 全选本页</label>
+      <button class="btn btn-sm btn-ghost" type="button" id="invertSel">反选</button>
+      <span class="bulk-count">已选 <b id="selCount">0</b> 项</span>
+      <span class="bulk-hint" id="selHint">勾选后可整批停用或删除，不必逐条点</span>
+      <span class="bulk-actions">
+        <button class="btn btn-sm" type="button" id="clearSel" disabled>清除选择</button>
+        <button class="btn btn-sm" type="submit" id="bulkDisable" data-bulk-action="disable"
+                data-confirm-tpl="停用后登记业务时选不到这些客户，历史业务不受影响。确认停用选中的 {n} 家客户？"
+                {% if not may_manage %}disabled{% endif %}>批量停用</button>
+        <button class="btn btn-sm" type="submit" id="bulkEnable" data-bulk-action="enable"
+                data-confirm-tpl="确认启用选中的 {n} 家客户？"
+                {% if not may_manage %}disabled{% endif %}>批量启用</button>
+        <button class="btn btn-sm btn-danger" type="submit" id="bulkDelete" data-bulk-action="delete"
+                data-confirm-tpl="删除后档案无法恢复。已有业务记录的客户会被跳过并保留。确认删除选中的 {n} 家客户？"
+                {% if not may_manage %}disabled{% endif %}>批量删除</button>
+      </span>
+    </div>
+  </form>
+
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th class="ck-cell"><input type="checkbox" class="js-check-all" title="全选本页"></th>
+          <th>客户名称</th><th>主体公司</th><th>联系人 / 电话</th>
+          <th>开户行 / 账号</th><th style="white-space:nowrap">归属部门</th>
+          <th class="num" style="min-width:128px">发票额度</th>
+          <th>状态</th>
+          <th style="width:190px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in rows %}
+        <tr>
+          <td class="ck-cell">
+            <input type="checkbox" class="row-check" form="batchForm" name="ids" value="{{ c.id }}"
+                   {% if not may_manage %}disabled title="需要「维护 / 导入客户」权限"{% endif %}>
+          </td>
+          <td class="cust">{{ c.name }}</td>
+          <td>{{ c.short_name or '' }}</td>
+          <td>
+            {{ c.contact or '' }}{% if c.phone %}
+            <br><span style="color:var(--muted);font-size:12.5px">{{ c.phone }}</span>{% endif %}
+          </td>
+          <td style="color:var(--muted);font-size:12.5px">
+            {{ c.bank_name or '' }}{% if c.bank_account %}<br>{{ c.bank_account }}{% endif %}
+          </td>
+          <td>{{ c.dept_name or '' }}</td>
+          <td class="num">
+            {% if c.invoice_quota_cents %}
+              {% set quota_left = c.invoice_quota_cents - (c.invoiced_cents or 0) %}
+              <b>{{ money(c.invoice_quota_cents) }}</b>
+              <div style="font-size:11px;color:var(--muted-2);line-height:1.5;margin-top:2px">
+                已开 {{ money(c.invoiced_cents or 0) }} · 剩
+                <span class="{% if quota_left < 0 %}neg{% endif %}">{{ money(quota_left) }}</span>
+              </div>
+            {% else %}
+              <span style="color:var(--muted-2)">未设置</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if c.is_active %}<span class="tag tag-completed">启用</span>
+            {% else %}<span class="tag tag-draft">停用</span>{% endif %}
+          </td>
+          <td>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-sm" type="button" onclick="openDialog('dlgEdit{{ c.id }}')"
+                      {% if not may_manage %}disabled title="需要「维护 / 导入客户」权限"{% endif %}>编辑</button>
+              {% if may_manage %}
+              <form method="post" action="{{ url_for('customers.toggle', customer_id=c.id) }}"
+                    data-confirm="{{ '停用后登记时选不到该客户，历史业务不受影响。确认？' if c.is_active else '确认启用该客户？' }}">
+                <button class="btn btn-sm" type="submit">{{ '停用' if c.is_active else '启用' }}</button>
+              </form>
+              <form method="post" action="{{ url_for('customers.delete', customer_id=c.id) }}"
+                    data-confirm="删除后档案无法恢复。若该客户已有业务记录，系统会拒绝删除并建议改用停用。确认删除「{{ c.name }}」？">
+                <button class="btn btn-sm btn-danger" type="submit">删除</button>
+              </form>
+              {% else %}
+              <button class="btn btn-sm" type="button" disabled title="需要「维护 / 导入客户」权限">停用</button>
+              <button class="btn btn-sm" type="button" disabled title="需要「维护 / 导入客户」权限">删除</button>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pager">
+    <div class="pager-info">第 {{ page }} / {{ pages }} 页</div>
+    <div class="pager-links">
+      {% if page > 1 %}<a class="btn btn-sm" href="{{ page_url(page - 1) }}">上一页</a>{% endif %}
+      {% if page < pages %}<a class="btn btn-sm" href="{{ page_url(page + 1) }}">下一页</a>{% endif %}
+    </div>
+  </div>
+  {% else %}
+  <div class="empty">
+    <div class="ico">—</div>
+    <div class="txt">
+      {% if kw %}没有匹配的客户，换个关键字试试{% else %}还没有客户档案，可手动新增或批量导入{% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% if can('customer.manage') %}
+<!-- 新增客户 -->
+<dialog id="dlgNewCustomer" style="border:0;border-radius:12px;padding:0;max-width:620px;width:94%">
+  <form method="post" action="{{ url_for('customers.new') }}">
+    <div class="card-head"><div class="card-title">新增客户</div></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="field full"><label>客户名称<span class="req">*</span></label><input type="text" name="name" required maxlength="100" placeholder="客户全称，建议与营业执照一致"></div>
+        <div class="field"><label>主体公司</label><input type="text" name="short_name" maxlength="50" placeholder="对应贸易计划模板字段，如 华农"></div>
+        <div class="field"><label>联系人</label><input type="text" name="contact" maxlength="50"></div>
+        <div class="field"><label>电话</label><input type="tel" name="phone" maxlength="30"></div>
+        <div class="field"><label>纳税人识别号</label><input type="text" name="tax_no" maxlength="30" placeholder="开票用"></div>
+        <div class="field"><label>开户行</label><input type="text" name="bank_name" maxlength="60"></div>
+        <div class="field"><label>银行账号</label><input type="text" name="bank_account" maxlength="40"></div>
+        <div class="field"><label>发票额度（元）</label><input type="number" step="0.01" min="0" name="invoice_quota" class="num-input" placeholder="0.00"></div>
+        <div class="field"><label>归属部门</label>
+          <select name="dept_id">
+            <option value="">不指定</option>
+            {% for d in depts %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field full"><label>地址</label><input type="text" name="address" maxlength="120"></div>
+        <div class="field full"><label>备注</label><textarea name="remark"></textarea></div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="button" data-close-dialog>取消</button>
+      <button class="btn btn-primary" type="submit">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 编辑客户 -->
+{% for c in rows %}
+<dialog id="dlgEdit{{ c.id }}" style="border:0;border-radius:12px;padding:0;max-width:620px;width:94%">
+  <form method="post" action="{{ url_for('customers.update', customer_id=c.id) }}">
+    <div class="card-head"><div class="card-title">编辑 {{ c.name }}</div></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="field full"><label>客户名称<span class="req">*</span></label><input type="text" name="name" required maxlength="100" value="{{ c.name }}"></div>
+        <div class="field"><label>主体公司</label><input type="text" name="short_name" maxlength="50" value="{{ c.short_name or '' }}"></div>
+        <div class="field"><label>联系人</label><input type="text" name="contact" maxlength="50" value="{{ c.contact or '' }}"></div>
+        <div class="field"><label>电话</label><input type="tel" name="phone" maxlength="30" value="{{ c.phone or '' }}"></div>
+        <div class="field"><label>纳税人识别号</label><input type="text" name="tax_no" maxlength="30" value="{{ c.tax_no or '' }}"></div>
+        <div class="field"><label>开户行</label><input type="text" name="bank_name" maxlength="60" value="{{ c.bank_name or '' }}"></div>
+        <div class="field"><label>银行账号</label><input type="text" name="bank_account" maxlength="40" value="{{ c.bank_account or '' }}"></div>
+        <div class="field"><label>发票额度（元）</label><input type="number" step="0.01" min="0" name="invoice_quota" class="num-input" value="{{ to_yuan_text(c.invoice_quota_cents) }}" placeholder="0.00"></div>
+        <div class="field"><label>归属部门</label>
+          <select name="dept_id">
+            <option value="">不指定</option>
+            {% for d in depts %}
+            <option value="{{ d.id }}" {% if c.dept_id == d.id %}selected{% endif %}>{{ d.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field full"><label>地址</label><input type="text" name="address" maxlength="120" value="{{ c.address or '' }}"></div>
+        <div class="field full"><label>备注</label><textarea name="remark">{{ c.remark or '' }}</textarea></div>
+      </div>
+      <div class="hint" style="margin-top:10px">改名后，历史业务里的客户名称会自动同步为新名称。</div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" type="button" data-close-dialog>取消</button>
+      <button class="btn btn-primary" type="submit">保存</button>
+    </div>
+  </form>
+</dialog>
+{% endfor %}
+{% endif %}
+
+{% endblock %}

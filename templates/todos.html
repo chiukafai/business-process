@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}我的待办{% endblock %}
+{% block page_title %}我的待办{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="tabs">
+    {% for key in tab_order %}{% set m = meta[key] %}
+    <a class="tab {% if key == active_tab %}on{% endif %}" href="{{ url_for('todos.index', tab=key) }}">
+      {{ m.label }}
+      {% if counts[key] %}<span class="cnt">{{ counts[key] }}</span>{% endif %}
+    </a>
+    {% endfor %}
+  </div>
+
+  {% set rows = todos[active_tab] %}
+  {% if rows %}
+  <div style="padding:10px 18px;background:var(--surface-2);border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)">
+    {{ meta[active_tab].hint }} · 按等待时间从长到短排序
+  </div>
+
+  <div class="table-wrap records-table">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>状态</th><th>客户名称</th><th>归属部门</th><th>登记人</th>
+          <th class="num">业务金额</th><th class="num">应收</th><th class="num">待收</th>
+          <th>等待</th><th style="width:150px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="{% if r.updated_at | stale %}stale-row{% endif %}">
+          <td><span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span></td>
+          <td class="cust"><a href="{{ url_for('records.detail', record_id=r.id) }}">{{ r.customer_name }}</a></td>
+          <td>{{ r.dept_name or '' }}</td>
+          <td>{{ r.owner_display or r.owner_name or '' }}</td>
+          <td class="num">{{ money(r.biz_amount_cents) }}</td>
+          <td class="num">{{ money(r.payable_amount_cents) }}</td>
+          <td class="num {% if r.unpaid_amount_cents < 0 %}neg{% endif %}">{{ money(r.unpaid_amount_cents) }}</td>
+          <td style="white-space:nowrap" class="{% if r.updated_at | stale %}neg{% endif %}">
+            {{ r.updated_at | waited }}
+          </td>
+          <td>
+            <div style="display:flex;gap:6px">
+              <a class="btn btn-sm btn-primary" href="{{ url_for('records.detail', record_id=r.id) }}">
+                {% if active_tab in ('receipt', 'collect') %}去收款{% elif active_tab == 'revise' %}去修改{% else %}继续登记{% endif %}
+              </a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="rec-cards" style="padding:12px">
+    {% for r in rows %}
+    <a class="rec-card" {% if r.updated_at | stale %}style="background:#fffbeb"{% endif %} href="{{ url_for('records.detail', record_id=r.id) }}">
+      <div class="rc-top">
+        <span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span>
+        <span class="rc-cust">{{ r.customer_name }}</span>
+      </div>
+      <div class="rc-mid">
+        <div><label>业务金额</label><b>{{ money(r.biz_amount_cents) }}</b></div>
+        <div><label>待收</label><b class="{% if r.unpaid_amount_cents < 0 %}neg{% endif %}">{{ money(r.unpaid_amount_cents) }}</b></div>
+        <div><label>等待</label><b class="{% if r.updated_at | stale %}neg{% endif %}">{{ r.updated_at | waited }}</b></div>
+      </div>
+      <div class="rc-bottom">{{ r.dept_name or '' }} · {{ r.owner_display or r.owner_name or '' }}</div>
+    </a>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <div class="empty">
+    <div class="ico">—</div>
+    <div class="txt">{{ meta[active_tab].label }}：暂时没有需要你处理的事项</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

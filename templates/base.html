@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}业务登记{% endblock %} · 海露业务流程</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230f766e'/><text x='50' y='72' font-size='62' text-anchor='middle' fill='%23fff' font-family='sans-serif'>海</text></svg>">
+</head>
+<body class="{% block body_class %}{% endblock %}"{% if current_user and current_user.must_change_password %} data-locked="1" data-lock-url="{{ url_for('auth.change_password') }}"{% endif %}>
+
+{% if current_user %}
+<aside class="sidebar">
+  <div class="brand">
+    <span class="brand-mark">海</span>
+    <span class="brand-text">业务登记</span>
+  </div>
+
+  <nav class="nav{% if current_user.must_change_password %} nav-locked{% endif %}">
+    <a href="{{ url_for('dashboard.index') }}" class="nav-item {% if request.endpoint == 'dashboard.index' %}active{% endif %}">看板</a>
+    <a href="{{ url_for('records.index') }}" class="nav-item {% if request.endpoint == 'records.index' %}active{% endif %}">业务列表</a>
+    {% if can('record.create') %}
+    <a href="{{ url_for('records.new') }}" class="nav-item {% if request.endpoint == 'records.new' %}active{% endif %}">登记业务</a>
+    {% endif %}
+    <a href="{{ url_for('todos.index') }}" class="nav-item {% if request.endpoint == 'todos.index' %}active{% endif %}">
+      我的待办
+      {% if todo_badge.total %}<span class="badge-dot">{{ todo_badge.total }}</span>{% endif %}
+    </a>
+    {% if can('customer.view') %}
+    <a href="{{ url_for('customers.index') }}" class="nav-item {% if request.endpoint and request.endpoint.startswith('customers.') %}active{% endif %}">客户档案</a>
+    {% endif %}
+
+    {% if can('record.import') or can('admin.users') or can('admin.master') or current_user.role == 'admin' %}
+    <div class="nav-sep">管理</div>
+    {% endif %}
+    {% if can('record.import') %}
+    <a href="{{ url_for('excel.import_page') }}" class="nav-item {% if request.endpoint == 'excel.import_page' %}active{% endif %}">导入数据</a>
+    {% endif %}
+    {% if can('admin.users') %}
+    <a href="{{ url_for('admin.users') }}" class="nav-item {% if request.endpoint == 'admin.users' %}active{% endif %}">人员与权限</a>
+    {% endif %}
+    {% if can('admin.master') %}
+    <a href="{{ url_for('admin.depts') }}" class="nav-item {% if request.endpoint == 'admin.depts' %}active{% endif %}">部门</a>
+    {% endif %}
+    {% if current_user.role == 'admin' %}
+    <a href="{{ url_for('admin.logs') }}" class="nav-item {% if request.endpoint == 'admin.logs' %}active{% endif %}">操作日志</a>
+    <a href="{{ url_for('admin.settings') }}" class="nav-item {% if request.endpoint == 'admin.settings' %}active{% endif %}">系统设置</a>
+    {% endif %}
+  </nav>
+
+  <div class="userbox">
+    <div class="u-name">{{ current_user.name }}</div>
+    <div class="u-meta">{{ ROLE_LABELS.get(current_user.role, current_user.role) }}{% if current_user.dept_name %} · {{ current_user.dept_name }}{% endif %}</div>
+    <div class="u-actions">
+      <a href="{{ url_for('auth.change_password') }}">改密码</a>
+      <a href="{{ url_for('auth.logout') }}">退出</a>
+    </div>
+  </div>
+</aside>
+{% endif %}
+
+<main class="main">
+  {% if current_user %}
+  <header class="topbar">
+    <div class="topbar-title">{% block page_title %}{% endblock %}</div>
+    <div class="topbar-right">
+      {% block topbar_actions %}{% endblock %}
+    </div>
+  </header>
+  {% endif %}
+
+  <div class="content {% block content_class %}{% endblock %}">
+    {% if current_user and current_user.must_change_password %}
+    <div class="lockbar">
+      <span class="lockbar-ico">🔒</span>
+      <div class="lockbar-txt">
+        <b>账号处于「待设置新密码」状态</b>
+        <span>其他菜单暂不可用，点击会停在本页。请在下方设置新密码后即可正常使用全部功能。</span>
+      </div>
+    </div>
+    {% endif %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flashes">
+          {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+</main>
+
+{% if current_user %}
+<nav class="tabbar{% if current_user.must_change_password %} nav-locked{% endif %}">
+  <a href="{{ url_for('dashboard.index') }}" class="{% if request.endpoint == 'dashboard.index' %}on{% endif %}">看板</a>
+  <a href="{{ url_for('records.index') }}" class="{% if request.endpoint in ['records.index','records.detail'] %}on{% endif %}">业务</a>
+  {% if can('record.create') %}
+  <a href="{{ url_for('records.new') }}" class="{% if request.endpoint == 'records.new' %}on{% endif %}">登记</a>
+  {% endif %}
+  <a href="{{ url_for('todos.index') }}" class="{% if request.endpoint == 'todos.index' %}on{% endif %}">
+    <span class="tab-ico">待办{% if todo_badge.total %}<i class="tab-dot">{{ todo_badge.total }}</i>{% endif %}</span>
+  </a>
+  <a href="{{ url_for('auth.change_password') }}" class="{% if request.endpoint == 'auth.change_password' %}on{% endif %}">我的</a>
+</nav>
+{% endif %}
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · 业务登记系统</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="login-brand">
+      <span class="brand-mark">海</span>
+      <div>
+        <div class="login-title">业务登记系统</div>
+        <div class="login-sub">海露集团 · 业务协同台账</div>
+      </div>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flashes">
+          {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <form method="post">
+      <div class="field">
+        <label for="username">用户名</label>
+        <input type="text" id="username" name="username" autocomplete="username"
+               autofocus required placeholder="请输入用户名">
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input type="password" id="password" name="password"
+               autocomplete="current-password" required placeholder="请输入密码">
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">登录</button>
+    </form>
+
+    <div class="login-foot">账号由管理员开通，忘记密码请联系管理员重置</div>
+  </div>
+</div>
+</body>
+</html>
