@@ -1,8 +1,12 @@
-"""用真实的《业务登记模板2.xlsx》（贸易计划格式）验证导入改造：
+"""用「贸易计划」模板格式验证导入改造（自造脱敏样例，不依赖真实业务文件）：
 
 1. 业务金额按「主体公司」汇总，不再每一行生成一条业务
 2. 上游公司（C 列）带入业务登记，下游公司（L 列）不导入
 3. 费用类型改为四项单独填列，「通道费」改名「资金过夜费」
+4. 名称末尾括号备注先清理再入库
+
+样例文件每次运行时由本脚本生成到 data_tpl/ 下，公司名与金额均为虚构，
+列结构与《贸易计划》模板完全一致，因此可以直接在任意机器上跑。
 """
 import io
 import os
@@ -10,12 +14,46 @@ import sys
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(BASE, "data_tpl")
-XLSX = os.path.join(BASE, "业务登记模板2.xlsx")
+os.makedirs(DATA, exist_ok=True)
+XLSX = os.path.join(DATA, "示例贸易计划.xlsx")
 
 for name in ("app.db", "app.db-wal", "app.db-shm", "secret.key"):
     path = os.path.join(DATA, name)
     if os.path.exists(path):
         os.remove(path)
+
+
+def make_sample_xlsx(path):
+    """按贸易计划模板的列结构造脱敏样例：3 行明细 + 1 汇总行 + 表尾零散计算块。"""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["大类", "品种", "上游公司", "数量", "单价", "金额", "主体公司",
+               "数量2", "单价2", "金额2", "利润", "下游公司", "列1", "列2"])
+    rows = [
+        ["豆菜", "豆角", "沃田农艺园（无票）", 34610, 6.01, 100000.5, "粤丰果业",
+         34500, 6.06, 100500, 499.50, "批发商（广州）-示例商行", 21, "广州"],
+        ["茄果蔬菜", "青线椒", "沃田农艺园", 11930, 14.01, 200000.25, "粤丰果业",
+         11850, 14.12, 200300, 299.75, "批发商（广州）-示例商行", 22, "深圳"],
+        ["青菜", "上海青", "沃田农艺园", 97370, 2.21, 300000.25, "粤丰果业",
+         97300, 2.25, 300500, 499.75, "批发商（广州）-示例商行", 22, "广州"],
+        # 汇总行：应被跳过，不当成业务
+        ["汇总", None, 3, 143910, None, 600001, None, 143650, None, 601300,
+         1299.0, None, None, None],
+        [None] * 14,
+        # 表尾零散计算块：客户名位置是数字，应被跳过
+        [None, None, None, None, None, "贸易", 1948, 0.0033, None, None, None, None, None, None],
+        [None, None, None, None, None, "利润", 1299.0, 1948.09923, None, None, None, None, None, None],
+        [None, None, None, None, None, None, 3247.0, None, None, None, None, None, None, None],
+    ]
+    for r in rows:
+        ws.append(r)
+    wb.save(path)
+    return path
+
+
+make_sample_xlsx(XLSX)
 
 os.environ["DATA_DIR"] = DATA
 sys.path.insert(0, BASE)
@@ -39,32 +77,32 @@ def check(label, ok, extra=""):
 
 
 print("=== 0. 名称清理（去掉末尾括号备注） ===")
-check("广州御品鲜（无票）",
-      clean_company_name("广州御品鲜（无票）") == "广州御品鲜",
-      clean_company_name("广州御品鲜（无票）"))
-check("正园农艺园（无票）",
-      clean_company_name("正园农艺园（无票）") == "正园农艺园",
-      clean_company_name("正园农艺园（无票）"))
+check("粤丰果业（无票）",
+      clean_company_name("粤丰果业（无票）") == "粤丰果业",
+      clean_company_name("粤丰果业（无票）"))
+check("沃田农艺园（无票）",
+      clean_company_name("沃田农艺园（无票）") == "沃田农艺园",
+      clean_company_name("沃田农艺园（无票）"))
 check("半角括号 (无票)",
-      clean_company_name("正园农艺园(无票)") == "正园农艺园",
-      clean_company_name("正园农艺园(无票)"))
+      clean_company_name("沃田农艺园(无票)") == "沃田农艺园",
+      clean_company_name("沃田农艺园(无票)"))
 check("【无票】方括号",
-      clean_company_name("正园农艺园【无票】") == "正园农艺园",
-      clean_company_name("正园农艺园【无票】"))
+      clean_company_name("沃田农艺园【无票】") == "沃田农艺园",
+      clean_company_name("沃田农艺园【无票】"))
 check("括号 + 多余符号 + 空格",
-      clean_company_name(" 广州御品鲜 （ 无票 ） - ") == "广州御品鲜",
-      clean_company_name(" 广州御品鲜 （ 无票 ） - "))
+      clean_company_name(" 粤丰果业 （ 无票 ） - ") == "粤丰果业",
+      clean_company_name(" 粤丰果业 （ 无票 ） - "))
 check("多重括号备注连续清理",
-      clean_company_name("广州御品鲜（无票）（广州）") == "广州御品鲜",
-      clean_company_name("广州御品鲜（无票）（广州）"))
+      clean_company_name("粤丰果业（无票）（广州）") == "粤丰果业",
+      clean_company_name("粤丰果业（无票）（广州）"))
 check("括号在中间时不误删",
       clean_company_name("广州（集团）食品有限公司") == "广州（集团）食品有限公司",
       clean_company_name("广州（集团）食品有限公司"))
 check("末尾括号是名称组成部分时保留",
-      clean_company_name("御品鲜（集团）") == "御品鲜（集团）",
-      clean_company_name("御品鲜（集团）"))
+      clean_company_name("果业（集团）") == "果业（集团）",
+      clean_company_name("果业（集团）"))
 check("干净名称原样返回",
-      clean_company_name("广州御品鲜") == "广州御品鲜")
+      clean_company_name("粤丰果业") == "粤丰果业")
 check("空值返回空串", clean_company_name(None) == "" and clean_company_name("  ") == "")
 
 print("\n=== 1. 月份工具 ===")
@@ -95,7 +133,7 @@ check("管理员登录", "退出" in client.get("/dashboard").get_data(as_text=T
 
 print("\n=== 3. 导入贸易计划模板（按主体公司汇总） ===")
 with open(XLSX, "rb") as fh:
-    payload = {"file": (fh, "业务登记模板2.xlsx")}
+    payload = {"file": (fh, os.path.basename(XLSX))}
     resp = client.post("/excel/import", data=payload,
                        content_type="multipart/form-data", follow_redirects=True)
 body = resp.get_data(as_text=True)
@@ -119,13 +157,13 @@ check("3 行明细汇总成 1 条业务", len(rows) == 1, str(len(rows)))
 
 if rows:
     rec = rows[0]
-    check("G 列「主体公司」当作客户名称", rec["customer_name"] == "广州御品鲜", rec["customer_name"])
-    check("F 列「金额」三行合计 590,333.10",
-          rec["biz_amount_cents"] == 59033310, str(rec["biz_amount_cents"]))
+    check("G 列「主体公司」当作客户名称", rec["customer_name"] == "粤丰果业", rec["customer_name"])
+    check("F 列「金额」三行合计 600,001.00",
+          rec["biz_amount_cents"] == 60000100, str(rec["biz_amount_cents"]))
     check("C 列「上游公司」写入业务登记",
-          "正园农艺园" in (rec["upstream_company"] or ""), str(rec["upstream_company"]))
+          "沃田农艺园" in (rec["upstream_company"] or ""), str(rec["upstream_company"]))
     check("上游公司括号备注已清理、去重后只剩一个",
-          rec["upstream_company"] == "正园农艺园", str(rec["upstream_company"]))
+          rec["upstream_company"] == "沃田农艺园", str(rec["upstream_company"]))
     check("主体公司括号备注已清理（客户名不含括号）",
           "（" not in rec["customer_name"] and "(" not in rec["customer_name"],
           rec["customer_name"])
@@ -140,7 +178,7 @@ if rows:
 
     with application.app_context():
         db = get_db()
-        cust = db.execute("SELECT id FROM customers WHERE name = '广州御品鲜'").fetchone()
+        cust = db.execute("SELECT id FROM customers WHERE name = '粤丰果业'").fetchone()
         check("客户档案自动建档", cust is not None)
 
 print("\n=== 4. 汇总行 / 下游公司 ===")
@@ -198,7 +236,7 @@ resp = client.post("/records/new", data={
     "prepaid_mode": "后付", "biz_year": "2025", "biz_month_no": "3",
     "fee_rate": "1.5", "biz_amount": "10000", "channel_commission": "0",
     "payable_amount": "", "prepaid_amount": "0", "paid_amount": "0",
-    "upstream_company": "正园农艺园",
+    "upstream_company": "沃田农艺园",
     "fee_service": "100", "fee_overnight": "50.5",
     "fee_finance": "20", "fee_other": "1.25",
     "action": "save",
@@ -209,7 +247,7 @@ with application.app_context():
 check("按年月保存为 2025-03-01", rec is not None and rec["biz_date"] == "2025-03-01",
       str(dict(rec) if rec else None))
 if rec:
-    check("上游公司保存成功", rec["upstream_company"] == "正园农艺园", str(rec["upstream_company"]))
+    check("上游公司保存成功", rec["upstream_company"] == "沃田农艺园", str(rec["upstream_company"]))
     check("服务费 100 元", rec["fee_service_cents"] == 10000, str(rec["fee_service_cents"]))
     check("资金过夜费 50.5 元", rec["fee_overnight_cents"] == 5050, str(rec["fee_overnight_cents"]))
     check("财务费用 20 元", rec["fee_finance_cents"] == 2000, str(rec["fee_finance_cents"]))
@@ -220,7 +258,7 @@ if rec:
     check("详情页显示费用明细四项",
           all(lbl in detail for _f, lbl, _c in FEE_TYPES))
     check("详情页显示费用合计", "费用合计" in detail)
-    check("详情页显示上游公司", "上游公司" in detail and "正园农艺园" in detail)
+    check("详情页显示上游公司", "上游公司" in detail and "沃田农艺园" in detail)
 
     edit = client.get(f"/records/{rec['id']}/edit").get_data(as_text=True)
     check("编辑页回填资金过夜费 50.50", 'value="50.50"' in edit, "未见回填值")
@@ -254,7 +292,7 @@ check("导出月份写为 YYYY-MM", all(isinstance(v, str) and len(v) == 7 for v
 
 up_col = headers.index("上游公司") + 1
 up_vals = [ws.cell(row=i, column=up_col).value for i in range(2, ws.max_row + 1)]
-check("导出带出上游公司", any(v and "正园" in str(v) for v in up_vals), str(up_vals))
+check("导出带出上游公司", any(v and "沃田" in str(v) for v in up_vals), str(up_vals))
 
 print("\n=== 10. 导出文件能再导入（闭环） ===")
 tmpl = client.get("/excel/template")

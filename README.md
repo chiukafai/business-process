@@ -2,6 +2,46 @@
 
 把《业务登记模板.xlsx》升级成多人协同的网页台账：各地部门异地登录、按人分配权限、状态一目了然、上游处理完下游自动出现在待办里，并可推送企业微信提醒。
 
+技术栈：Python 3 + Flask + SQLite(WAL)，模板 Jinja2，无前端构建步骤。
+
+## 零、克隆与参与开发
+
+```bash
+git clone git@github.com:chiukafai/business-process.git
+cd business-process
+pip install -r requirements.txt
+python app.py
+```
+
+> 国内网络访问 `https://github.com` 常被阻断，但 SSH 通，所以仓库远端用的是 SSH
+> （`git@github.com:chiukafai/business-process.git`）。首次使用请确认本机 SSH 公钥已加到 GitHub：
+> `ssh -T git@github.com` 返回 `Hi <你的用户名>!` 即正常。
+
+**仓库里没有任何真实业务数据**，以下内容被 `.gitignore` 排除，只存在于本机：
+
+| 排除项 | 原因 |
+|---|---|
+| `data/`、`backups/`、`*.db` | 客户档案、业务与收款流水、密码哈希 |
+| `secret.key` | 会话签名密钥 |
+| `业务登记模板*.xlsx`、`客户模板.xlsx` | 导入模板里含真实客户名与金额 |
+| `data_test*/`、`__pycache__/`、`.workbuddy/` | 测试临时库、缓存、项目记忆 |
+
+因此**克隆下来是空库**，第一次启动会按 `schema.sql` 建表并生成默认管理员 `admin / Hailu@2026`（首次登录强制改密）。要迁移真实数据，把原机器的 `data/` 目录整个拷过来即可。
+
+### 自检
+
+七套脚本都可以直接跑（自带临时数据库，不碰真实数据）：
+
+```bash
+python test_receipt.py    # 收款流程：分批收款、留空挂账、填 0 结清、费用登记
+python test_excel.py      # Excel 导入导出、列序、多行合并加权费率
+python test_import2.py    # 贸易计划模板导入（自造脱敏样例，不依赖真实文件）
+python test_customers.py  # 客户档案、发票额度
+python test_delete.py     # 删除与引用保护
+python test_bulk.py       # 批量勾选与批量操作
+python e2e_test.py        # 端到端：登记→提交→收款→结清
+```
+
 ## 一、本机启动（Windows）
 
 双击 `启动.bat`，或命令行：
