@@ -122,6 +122,7 @@ def create_app():
             "ROLE_LABELS": utils.ROLE_LABELS,
             "PREPAID_MODES": utils.PREPAID_MODES,
             "FEE_TYPES": utils.FEE_TYPES,
+            "RECEIPT_ITEMS": utils.RECEIPT_ITEMS,
             "fee_total": utils.fee_total_cents,
             "fee_items": utils.fee_items,
             "status_label": utils.status_label,

@@ -96,7 +96,8 @@ check("收款结清标记为 0", row["receipt_closed"] == 0)
 detail = body(f"/records/{rid}")
 check("详情页状态显示「待收款」", "待收款" in detail)
 check("详情页有「收款登记」卡片", "收款登记" in detail)
-check("详情页说明「留空 = 未收完」", "留空 = 未收完" in detail or "留空表示还有款项待收" in detail)
+check("详情页说明「全留空 = 还有款项待收」",
+      "各项全留空" in detail and "还有款项待收" in detail)
 check("详情页有「费用登记」区块", "费用登记" in detail)
 check("旧的「确认付款」按钮已移除", "确认付款" not in detail)
 check("不再显示「未付款金额」字样", "未付款金额" not in detail)
@@ -169,7 +170,9 @@ row = rec(rid)
 check("删结清记录后状态回到待收款", row["status"] == "pending_payment", row["status"])
 check("结清标记回 0", row["receipt_closed"] == 0)
 check("已收金额仍为 30000 分", row["received_amount_cents"] == 30000)
-check("待收回到 90000 分", row["unpaid_amount_cents"] == 90000, str(row["unpaid_amount_cents"]))
+# 应收 = 贸易费 120000 + 留存利润 0 + 资金过夜费 300（第 5 段登记的 3 元）
+check("待收回到 90300 分（含资金过夜费 300）", row["unpaid_amount_cents"] == 90300,
+      str(row["unpaid_amount_cents"]))
 
 # ---------- 7. 收满自动结清 ----------
 print("\n=== 7. 分批收满自动转已收齐 ===")
@@ -508,18 +511,27 @@ check("留空后待收回到 1300 元", row["unpaid_amount_cents"] == 130000,
 client.post(f"/records/{rid3}/edit", data=dict(FEE_FORM, action="submit"), follow_redirects=True)
 check("提交后进入待收款", rec(rid3)["status"] == "pending_payment", rec(rid3)["status"])
 client.post(f"/records/{rid3}/receipts",
-            data={"received_amount": "1000", "received_date": "2026-11-07"}, follow_redirects=True)
+            data={"trade_fee": "1000", "received_date": "2026-11-07"}, follow_redirects=True)
 row = rec(rid3)
 check("收款重算后贸易费仍是手填的 1200.26", row["payable_amount_cents"] == 120026,
       str(row["payable_amount_cents"]))
-check("待收 = 1300.26 − 1000 = 300.26", row["unpaid_amount_cents"] == 30026,
+check("待收 = 贸易费差 200.26 + 留存利润 100 = 300.26", row["unpaid_amount_cents"] == 30026,
+      str(row["unpaid_amount_cents"]))
+check("流水记下分项：贸易费 1000", receipts(rid3)[-1]["trade_fee_cents"] == 100000,
+      str(receipts(rid3)[-1]["trade_fee_cents"]))
+
+# 只补贸易费：贸易费收满，但留存利润一分没收，仍不能结清
+client.post(f"/records/{rid3}/receipts",
+            data={"trade_fee": "200.26", "received_date": "2026-11-08"}, follow_redirects=True)
+row = rec(rid3)
+check("贸易费收满、留存利润未收 → 仍挂待收款", row["status"] == "pending_payment", row["status"])
+check("待收只剩留存利润 100 元", row["unpaid_amount_cents"] == 10000,
       str(row["unpaid_amount_cents"]))
 
-# 手续费补齐 → 自动结清
 client.post(f"/records/{rid3}/receipts",
-            data={"received_amount": "300.26", "received_date": "2026-11-08"}, follow_redirects=True)
+            data={"retention": "100", "received_date": "2026-11-08"}, follow_redirects=True)
 row = rec(rid3)
-check("补齐 300.26 后自动结清", row["receipt_closed"] == 1 and row["status"] == "completed",
+check("留存利润也收满 → 自动结清", row["receipt_closed"] == 1 and row["status"] == "completed",
       f"{row['receipt_closed']}/{row['status']}")
 
 # 校验：负数 / 非数字
@@ -529,6 +541,59 @@ check("贸易费填负数被拦", "贸易费不能为负数" in r.get_data(as_te
 r = client.post("/records/new", data=dict(FORM, customer_name="贸易费乱码",
                                           payable_amount="abc"), follow_redirects=True)
 check("贸易费填非数字被拦", "贸易费格式不正确" in r.get_data(as_text=True))
+
+print("\n=== 14. 收款按费用分项填列 ===")
+SPLIT_FORM = dict(FORM, customer_name="分项收款客户", biz_amount="100000", fee_rate="1",
+                  channel_commission="200", fee_overnight="50", invoice_needed="0")
+client.post("/records/new", data=dict(SPLIT_FORM, action="submit"), follow_redirects=True)
+with application.app_context():
+    rid4 = get_db().execute("SELECT MAX(id) m FROM records").fetchone()["m"]
+row = rec(rid4)
+check("应收合计 = 贸易费 1000 + 留存 200 + 过夜费 50 = 1250 元",
+      row["payable_amount_cents"] + row["channel_commission_cents"]
+      + row["fee_overnight_cents"] == 125000,
+      str(row["payable_amount_cents"] + row["channel_commission_cents"]
+          + row["fee_overnight_cents"]))
+check("资金过夜费计入待收 1250 元", row["unpaid_amount_cents"] == 125000,
+      str(row["unpaid_amount_cents"]))
+
+detail4 = body(f"/records/{rid4}")
+check("详情页有分项表「收款项目」", "收款项目" in detail4)
+check("分项表列出资金过夜费", "资金过夜费" in detail4)
+check("表单有三项应收输入框",
+      'name="trade_fee"' in detail4 and 'name="retention"' in detail4
+      and 'name="overnight"' in detail4)
+check("表单有费用留痕三项",
+      'name="channel"' in detail4 and 'name="finance"' in detail4
+      and 'name="other"' in detail4)
+check("有「按待收全额填入」按钮", 'id="recvFillAll"' in detail4)
+check("本次合计只读框存在", 'id="fRecvTotal"' in detail4 and "readonly" in
+      detail4.split('id="fRecvTotal"')[1].split(">")[0])
+
+# 只收贸易费 → 不结清
+client.post(f"/records/{rid4}/receipts",
+            data={"trade_fee": "1000", "received_date": "2026-11-09"}, follow_redirects=True)
+row = rec(rid4)
+check("只收贸易费 1000 → 待收 250 元", row["unpaid_amount_cents"] == 25000,
+      str(row["unpaid_amount_cents"]))
+check("未收齐不结清", row["status"] == "pending_payment", row["status"])
+
+# 一次补齐留存利润 + 过夜费，并登记渠道提成留痕
+client.post(f"/records/{rid4}/receipts",
+            data={"retention": "200", "overnight": "50", "channel": "10",
+                  "received_date": "2026-11-09"}, follow_redirects=True)
+row = rec(rid4)
+last = receipts(rid4)[-1]
+check("补齐后自动结清", row["status"] == "completed" and row["receipt_closed"] == 1,
+      f"{row['status']}/{row['receipt_closed']}")
+check("本次合计 = 200 + 50 + 10(留痕) = 260 元", last["amount_cents"] == 26000,
+      str(last["amount_cents"]))
+check("流水分项：留存利润 200", last["retention_cents"] == 20000, str(last["retention_cents"]))
+check("流水分项：资金过夜费 50", last["overnight_cents"] == 5000, str(last["overnight_cents"]))
+check("流水分项：渠道提成 10（留痕，不进应收）", last["channel_cents"] == 1000,
+      str(last["channel_cents"]))
+check("累计已收 1250 + 10 = 1260 元（留痕项也计入实收合计）",
+      row["received_amount_cents"] == 126000, str(row["received_amount_cents"]))
 
 print("\n" + "=" * 50)
 print(f"通过 {passed} 项，失败 {failed} 项")

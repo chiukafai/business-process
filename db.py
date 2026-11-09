@@ -156,6 +156,12 @@ def _migrate(db):
              id            INTEGER PRIMARY KEY AUTOINCREMENT,
              record_id     INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
              amount_cents  INTEGER NOT NULL DEFAULT 0,
+             trade_fee_cents INTEGER NOT NULL DEFAULT 0,
+             retention_cents INTEGER NOT NULL DEFAULT 0,
+             overnight_cents INTEGER NOT NULL DEFAULT 0,
+             channel_cents   INTEGER NOT NULL DEFAULT 0,
+             finance_cents   INTEGER NOT NULL DEFAULT 0,
+             other_cents     INTEGER NOT NULL DEFAULT 0,
              received_date TEXT,
              receipt_no    TEXT,
              note          TEXT,
@@ -165,9 +171,34 @@ def _migrate(db):
              created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
            )"""
     )
+    # 老库的流水表补上分项列（收款按费用分项填列）
+    receipt_cols = _columns(db, "record_receipts")
+    for name in ("trade_fee_cents", "retention_cents", "overnight_cents",
+                 "channel_cents", "finance_cents", "other_cents"):
+        if name not in receipt_cols:
+            db.execute(
+                f"ALTER TABLE record_receipts ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0"
+            )
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_receipts_record ON record_receipts(record_id, id)"
     )
+
+    # 1.1.1 老流水的金额没有分项：整笔归到贸易费，让分项进度不至于全是 0
+    done_items = db.execute(
+        "SELECT value FROM app_settings WHERE key = 'receipt_items_v1'"
+    ).fetchone()
+    if not done_items:
+        db.execute(
+            """UPDATE record_receipts
+                  SET trade_fee_cents = amount_cents
+                WHERE amount_cents > 0
+                  AND trade_fee_cents + retention_cents + overnight_cents
+                      + channel_cents + finance_cents + other_cents = 0"""
+        )
+        db.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('receipt_items_v1', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
 
     # 1.2 历史「付款金额」搬到「已收金额」（一次性，避免覆盖后续手工登记）
     done_receipt = db.execute(

@@ -461,7 +461,8 @@ def import_page():
             })
 
         amounts = calc_amounts(total_amount, fee_rate, retention, prepaid, received,
-                               override_trade_fee=file_payable)
+                               override_trade_fee=file_payable,
+                               overnight_cents=fees["fee_overnight_cents"])
         payable = amounts["payable_amount_cents"]
         # 表里给了「贸易费 / 应收金额」就以表里的为准（可能是四舍五入后的实际数）；
         # 只有和公式差得多时才提示，方便回头核对

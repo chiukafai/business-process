@@ -110,22 +110,24 @@ def trade_fee_cents(biz_amount_cents, fee_rate):
 
 def calc_amounts(biz_amount_cents, fee_rate, retention_cents,
                  prepaid_amount_cents, received_amount_cents,
-                 override_trade_fee=None):
+                 override_trade_fee=None, overnight_cents=0):
     """统一金额口径。所有入参与返回均为整数分。
 
     贸易费   = 业务金额 × 费率（四舍五入到分）
                override_trade_fee 非 None 时以手填值为准 —— 用于四舍五入差异、
                或与客户谈定的实际费用不一致时的人工修正
     留存利润 = 贸易计划 K 列（利润1）合计        ← 与贸易费彼此独立，互不扣减
-    应收合计 = 贸易费 + 留存利润                 ← 两项都收齐才能进下一步
+    资金过夜费 = 费用明细里的「资金过夜费」       ← 计入应收（先按这三项判定收齐）
+    应收合计 = 贸易费 + 留存利润 + 资金过夜费
     公司实收 = 累计已收（实际到账，由收款流水累计）
     待收     = 应收合计 − 预存 − 已收（允许负数，表示多收/预收）
     """
     formula = trade_fee_cents(biz_amount_cents, fee_rate)
     fee = formula if override_trade_fee is None else int(override_trade_fee)
     retention = int(retention_cents or 0)
+    overnight = int(overnight_cents or 0)
     received = int(received_amount_cents or 0)
-    receivable = fee + retention
+    receivable = fee + retention + overnight
     unpaid = (Decimal(receivable)
               - Decimal(int(prepaid_amount_cents or 0))
               - Decimal(received)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
@@ -148,14 +150,15 @@ def _row_get(row, key, default=0):
 
 
 def receipt_progress(row):
-    """收款进度（分）。应收合计 = 贸易费 + 留存利润，含预存抵扣，待收可为负数（多收）。
+    """收款进度（分）。应收合计 = 贸易费 + 留存利润 + 资金过夜费，含预存抵扣。
 
-    返回 dict：trade_fee / retention / receivable / prepaid / received /
+    返回 dict：trade_fee / retention / overnight / receivable / prepaid / received /
                outstanding / percent / closed
     """
     trade_fee = int(_row_get(row, "payable_amount_cents"))
     retention = int(_row_get(row, "channel_commission_cents"))
-    receivable = trade_fee + retention
+    overnight = int(_row_get(row, "fee_overnight_cents"))
+    receivable = trade_fee + retention + overnight
     prepaid = int(_row_get(row, "prepaid_amount_cents"))
     received = int(_row_get(row, "received_amount_cents"))
     closed = bool(int(_row_get(row, "receipt_closed")))
@@ -169,6 +172,7 @@ def receipt_progress(row):
     return {
         "trade_fee": trade_fee,
         "retention": retention,
+        "overnight": overnight,
         "receivable": receivable,
         "prepaid": prepaid,
         "received": received,
@@ -176,6 +180,57 @@ def receipt_progress(row):
         "percent": percent,
         "closed": closed,
     }
+
+
+# 收款分项：(表单字段, 标签, 流水列, 是否计入应收, records 上对应的应收列)
+RECEIPT_ITEMS = [
+    ("trade_fee", "贸易费",   "trade_fee_cents", True,  "payable_amount_cents"),
+    ("retention", "留存利润", "retention_cents", True,  "channel_commission_cents"),
+    ("overnight", "资金过夜费", "overnight_cents", True, "fee_overnight_cents"),
+    ("channel",   "渠道提成", "channel_cents",   False, "fee_service_cents"),
+    ("finance",   "财务费用", "finance_cents",   False, "fee_finance_cents"),
+    ("other",     "其他费用", "other_cents",     False, "fee_other_cents"),
+]
+
+
+def _prepaid_alloc(prepaid_cents, needs):
+    """预存按顺序抵扣各项应收（贸易费 → 留存利润 → 资金过夜费）。"""
+    alloc, left = {}, int(prepaid_cents or 0)
+    for key, need in needs:
+        take = min(max(0, left), max(0, need))
+        alloc[key] = take
+        left -= take
+    return alloc
+
+
+def receipt_items(row, totals):
+    """按分项算应收 / 已收 / 待收。
+
+    totals: dict，流水列名 → 累计分（可由 SQL SUM 得到，缺省当 0）
+    返回 list，每项：
+      key / label / counts（是否计入应收判定）/ needed / received / prepaid / outstanding
+    """
+    needs = []
+    for key, _label, _rc, counts, col in RECEIPT_ITEMS:
+        if counts:
+            needs.append((key, int(_row_get(row, col))))
+    alloc = _prepaid_alloc(_row_get(row, "prepaid_amount_cents"), needs)
+
+    items = []
+    for key, label, rc, counts, col in RECEIPT_ITEMS:
+        needed = int(_row_get(row, col))
+        got = int(totals.get(rc, 0) or 0)
+        offset = alloc.get(key, 0) if counts else 0
+        items.append({
+            "key": key,
+            "label": label,
+            "counts": counts,
+            "needed": needed,
+            "received": got,
+            "prepaid": offset,
+            "outstanding": (needed - got - offset) if counts else 0,
+        })
+    return items
 
 
 def fee_total_cents(row):

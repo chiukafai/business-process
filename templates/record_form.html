@@ -167,7 +167,7 @@
         <div class="sub-block">
           <div class="sub-head">
             <span class="sub-title">费用明细</span>
-            <span class="sub-hint">可留空，收到款项后由财务在详情页登记；不参与贸易费 / 待收的计算</span>
+            <span class="sub-hint">可留空；<b>资金过夜费计入应收</b>，其余三项只登记、不参与金额计算</span>
           </div>
           <div class="form-grid four">
             {% for field, label, col in FEE_TYPES %}
@@ -240,6 +240,10 @@
         <span class="v" id="calcRetention">0.00 元</span>
       </div>
       <div class="calc-row">
+        <span class="k">资金过夜费</span>
+        <span class="v" id="calcOvernight">0.00 元</span>
+      </div>
+      <div class="calc-row">
         <span class="k">应收合计</span>
         <span class="v" id="calcReceivable">0.00 元</span>
       </div>
@@ -252,11 +256,11 @@
         <span class="v" id="calcUnpaid">0.00 元</span>
       </div>
       <div style="font-size:11.5px;color:var(--muted-2);margin-top:10px;line-height:1.7">
-        贸易费 = 业务金额 × 费率（锁定）<br>
-        应收合计 = 贸易费 + 留存利润<br>
+        贸易费 = 业务金额 × 费率（可手改）<br>
+        应收合计 = 贸易费 + 留存利润 + 资金过夜费<br>
         待收 = 应收合计 − 预存 − 已收<br>
-        费用合计 = 渠道提成 + 资金过夜费 + 财务费用 + 其他费用（仅登记）<br>
-        <span style="color:var(--warn)">贸易费与留存利润两项都收齐，才转入开票 / 费用环节</span>
+        费用合计 = 渠道提成 + 资金过夜费 + 财务费用 + 其他费用<br>
+        <span style="color:var(--warn)">三项应收各自收齐，才转入开票 / 费用环节</span>
       </div>
     </div>
   </div>

@@ -85,6 +85,7 @@
       const amt = num('biz_amount');
       const rate = num('fee_rate');
       const retention = num('channel_commission');   // 留存利润（K 列合计）
+      const overnight = num('fee_overnight');        // 资金过夜费（计入应收）
       const prepaid = num('prepaid_amount');
       const paid = num('received_amount');   // 已收金额（只读，由收款登记累计）
 
@@ -99,7 +100,7 @@
         // 没手工改过：跟着公式走（新单自动填出，改金额/费率时同步刷新）
         feeEl.value = formulaFee.toFixed(2);
       }
-      const receivable = Math.round((tradeFee + retention) * 100) / 100;
+      const receivable = Math.round((tradeFee + retention + overnight) * 100) / 100;
       const unpaid = Math.round((receivable - prepaid - paid) * 100) / 100;
 
       // 费用明细四项合计（仅登记，不参与贸易费/待收计算）
@@ -118,6 +119,7 @@
       };
       set('calcTradeFee', fmt(tradeFee));
       set('calcRetention', fmt(retention));
+      set('calcOvernight', fmt(overnight));
       set('calcReceivable', fmt(receivable));
       set('calcFee', fmt(feeTotal));
       set('calcUnpaid', fmt(unpaid), unpaid < 0);

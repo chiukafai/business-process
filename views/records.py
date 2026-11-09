@@ -11,11 +11,11 @@ from db import get_db
 from notifier import notify_next
 from workflow import can_invoice as can_register_invoice
 from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES,
-                   calc_amounts, clean_company_name, customer_label,
+                   RECEIPT_ITEMS, calc_amounts, clean_company_name, customer_label,
                    fee_total_cents, month_bounds, month_value, needs_invoice,
-                   now_text, parse_date, parse_month, receipt_progress,
-                   status_label, to_cents, to_rate, to_yuan_text, today,
-                   trade_fee_cents)
+                   now_text, parse_date, parse_month, receipt_items,
+                   receipt_progress, status_label, to_cents, to_rate,
+                   to_yuan_text, today, trade_fee_cents)
 
 bp = Blueprint("records", __name__, url_prefix="/records")
 
@@ -239,6 +239,7 @@ def _read_form(form, db=None, rec=None):
         biz_amount_cents, fee_rate, retention_cents,
         prepaid_amount_cents, received_amount_cents,
         override_trade_fee=override_trade_fee,
+        overnight_cents=fee_values["fee_overnight_cents"],
     )
 
     data = {
@@ -491,6 +492,19 @@ def detail(record_id):
         "SELECT * FROM record_receipts WHERE record_id = ? ORDER BY id ASC", (record_id,)
     ).fetchall()
 
+    # 分项收款：各项应收 / 已收 / 待收（预存按顺序抵扣）
+    item_totals = db.execute(
+        """SELECT COALESCE(SUM(trade_fee_cents), 0) AS trade_fee_cents,
+                  COALESCE(SUM(retention_cents), 0) AS retention_cents,
+                  COALESCE(SUM(overnight_cents), 0) AS overnight_cents,
+                  COALESCE(SUM(channel_cents), 0)   AS channel_cents,
+                  COALESCE(SUM(finance_cents), 0)   AS finance_cents,
+                  COALESCE(SUM(other_cents), 0)     AS other_cents
+             FROM record_receipts WHERE record_id = ?""",
+        (record_id,),
+    ).fetchone()
+    item_rows = receipt_items(rec, dict(item_totals) if item_totals else {})
+
     actions = {
         "can_edit": is_owner and rec["status"] in ("draft", "rejected"),
         # 有删除权限的人可删任意状态；其他人只能删自己的报批中单据
@@ -527,7 +541,7 @@ def detail(record_id):
 
     return render_template(
         "record_detail.html", rec=rec, logs=logs, actions=actions,
-        receipts=receipts, progress=receipt_progress(rec),
+        receipts=receipts, progress=receipt_progress(rec), item_rows=item_rows,
         suggestions=suggestions, ocr_status=ocr.status(),
         dept_options=_dept_options(me),
         fee_formula=fee_formula, fee_gap=fee_gap,
@@ -678,30 +692,56 @@ def reject(record_id):
 def _recalc_receipt_state(db, record_id):
     """按收款流水重算累计已收与状态。返回 (已收分, 是否结清, 待收分, 原状态)。
 
-    应收合计 = 贸易费 + 留存利润；两项都收满（待收 ≤ 0）才自动结清。
+    应收合计 = 贸易费 + 留存利润 + 资金过夜费；
+    三项各自收满（预存按顺序抵扣）才自动结清，不是只看总额 —— 只填了贸易费、
+    留存利润一分没收的单，仍挂在「待收款」。
     公司实收 = 累计已收（实际到账），随收款一起更新。
     """
     rec = db.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
     agg = db.execute(
-        """SELECT COALESCE(SUM(amount_cents), 0) AS total,
-                  COALESCE(MAX(is_close), 0)    AS closed
+        """SELECT COALESCE(SUM(amount_cents), 0)    AS total,
+                  COALESCE(SUM(trade_fee_cents), 0) AS trade_fee_cents,
+                  COALESCE(SUM(retention_cents), 0) AS retention_cents,
+                  COALESCE(SUM(overnight_cents), 0) AS overnight_cents,
+                  COALESCE(SUM(channel_cents), 0)   AS channel_cents,
+                  COALESCE(SUM(finance_cents), 0)   AS finance_cents,
+                  COALESCE(SUM(other_cents), 0)     AS other_cents,
+                  COALESCE(MAX(is_close), 0)        AS closed
              FROM record_receipts WHERE record_id = ?""",
         (record_id,),
     ).fetchone()
     received = int(agg["total"] or 0)
-    closed = bool(int(agg["closed"] or 0))
+    explicit_close = bool(int(agg["closed"] or 0))   # 主管特批结清
+    closed = explicit_close
 
     amounts = calc_amounts(
         rec["biz_amount_cents"], rec["fee_rate"], rec["channel_commission_cents"],
         rec["prepaid_amount_cents"], received,
         # 贸易费可能被手工修正过，重算待收时不能拿公式值覆盖它
         override_trade_fee=rec["payable_amount_cents"],
+        overnight_cents=rec["fee_overnight_cents"],
     )
-    outstanding = amounts["unpaid_amount_cents"]
-    # 收满了也自动结清，避免金额已齐却还挂在「待收款」
-    receivable = amounts["payable_amount_cents"] + int(rec["channel_commission_cents"] or 0)
-    if not closed and outstanding <= 0 and receivable > 0:
+    receivable = (amounts["payable_amount_cents"]
+                  + int(rec["channel_commission_cents"] or 0)
+                  + int(rec["fee_overnight_cents"] or 0))
+
+    # 分项收齐判定（预存按 贸易费 → 留存利润 → 资金过夜费 顺序抵扣）
+    items = receipt_items(rec, dict(agg))
+    items_ok = all(i["outstanding"] <= 0 for i in items if i["counts"])
+    # 待收按分项正差相加：某项超收不抵扣别的项，这样「还差多少」不会被掩盖
+    outstanding = sum(i["outstanding"] for i in items
+                      if i["counts"] and i["outstanding"] > 0)
+    # 各项都已收满、但总共多收了，仍显示负数，提示客户多付（界面标红）
+    total_gap = amounts["unpaid_amount_cents"]
+    if items_ok and total_gap < 0:
+        outstanding = total_gap
+
+    if not closed and items_ok and receivable > 0:
         closed = True
+    # 应收变大（例如收齐后才补录资金过夜费）导致分项又不齐时，自动结清要退回待收款；
+    # 主管特批结清的单据不回退
+    if closed and not explicit_close and not items_ok:
+        closed = False
 
     status = "completed" if closed else "pending_payment"
     db.execute(
@@ -758,33 +798,51 @@ def invoice_set(record_id):
 @bp.route("/<int:record_id>/receipts", methods=("POST",))
 @login_required
 def receipt_add(record_id):
-    """登记一笔收款。
+    """登记一笔收款（按费用分项填列）。
 
-    金额留空 = 本次还没收到，业务继续挂在待收款；
-    金额填 0 = 收款完毕（剩余不再追收），业务转「已收齐」——属特殊情况，
-                需要「收款不足特批结清」权限（主管）；
-    金额 > 0 = 累加已收，贸易费 + 留存利润都收满后自动转「已收齐」。
+    分项：贸易费 / 留存利润 / 资金过夜费（计入应收，逐项跟踪收齐）
+          渠道提成 / 财务费用 / 其他费用（随款留痕，不参与应收判定）
+
+    各项全留空 = 本次还没收到，业务继续挂在待收款；
+    各项都填 0（合计 0）= 收款完毕（剩余不再追收），业务转「已收齐」——
+                属特殊情况，需要「收款不足特批结清」权限（主管）；
+    合计 > 0 = 累加已收，三项应收各自收满后自动转「已收齐」。
     """
     rec = get_record_or_404(record_id)
     if not can_receive_record(g.user, rec):
         flash("当前不能为这笔业务登记收款", "error")
         return redirect(url_for("records.detail", record_id=record_id))
 
-    raw = (request.form.get("received_amount") or "").strip()
-    if raw == "":
-        amount_cents = 0
-        is_close = False
-        blank = True
-    else:
+    # 按分项填列：贸易费 / 留存利润 / 资金过夜费（计入应收）
+    #              渠道提成 / 财务费用 / 其他费用（随款留痕，不参与应收判定）
+    values, blank = {}, True
+    for field, label, _rc, _counts, _col in RECEIPT_ITEMS:
+        raw = (request.form.get(field) or "").strip()
+        if raw == "":
+            values[field] = 0
+            continue
         blank = False
-        amount_cents = to_cents(raw)
-        if amount_cents is None or amount_cents < 0:
+        cents = to_cents(raw)
+        if cents is None or cents < 0:
+            flash(f"{label}格式不正确", "error")
+            return redirect(url_for("records.detail", record_id=record_id))
+        values[field] = cents
+
+    # 兼容只传一个总额的老调用（回单识别 / 旧链接）：整笔记作贸易费
+    if blank and (request.form.get("received_amount") or "").strip():
+        legacy = to_cents(request.form.get("received_amount"))
+        if legacy is None or legacy < 0:
             flash("本次收款金额格式不正确", "error")
             return redirect(url_for("records.detail", record_id=record_id))
-        is_close = amount_cents == 0
-        if is_close and not has_perm(g.user, "record.close_short"):
-            flash("未收齐就结清属于特殊情况，需要主管特批；请按实填写本次收款金额", "error")
-            return redirect(url_for("records.detail", record_id=record_id))
+        values["trade_fee"] = legacy
+        blank = False
+
+    amount_cents = sum(values.values())
+    # 各项都填 0（合计 0）= 特批结清；某一项填 0、其他项有钱则不触发
+    is_close = (not blank) and amount_cents == 0
+    if is_close and not has_perm(g.user, "record.close_short"):
+        flash("未收齐就结清属于特殊情况，需要主管特批；请按实填写各项收款金额", "error")
+        return redirect(url_for("records.detail", record_id=record_id))
 
     received_date = parse_date(request.form.get("received_date")) or today()
     receipt_no = (request.form.get("receipt_no") or "").strip()
@@ -793,22 +851,30 @@ def receipt_add(record_id):
     db = get_db()
     before = rec["status"]
     db.execute(
-        """INSERT INTO record_receipts (record_id, amount_cents, received_date,
+        """INSERT INTO record_receipts (record_id, amount_cents, trade_fee_cents,
+                                        retention_cents, overnight_cents, channel_cents,
+                                        finance_cents, other_cents, received_date,
                                         receipt_no, note, is_close, actor_id, actor_name, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
-        (record_id, amount_cents, received_date, receipt_no, note,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (record_id, amount_cents, values["trade_fee"], values["retention"],
+         values["overnight"], values["channel"], values["finance"], values["other"],
+         received_date, receipt_no, note,
          1 if is_close else 0, g.user["id"], g.user["name"], now_text()),
     )
     received, closed, outstanding, _ = _recalc_receipt_state(db, record_id)
 
+    split = "、".join(f"{label} {to_yuan_text(values[field])}"
+                      for field, label, _rc, _counts, _col in RECEIPT_ITEMS
+                      if values[field])
     if blank:
         detail_note = "本次未填金额：仍有款项待收，业务继续挂在待收款"
     elif is_close:
-        detail_note = (f"主管特批结清（填 0，剩余不再追收），"
+        detail_note = (f"主管特批结清（各项均填 0，剩余不再追收），"
                        f"待收 {to_yuan_text(outstanding)} 元")
     else:
-        detail_note = (f"收款 {to_yuan_text(amount_cents)} 元，回单号 {receipt_no or '—'}"
-                       f"，累计已收 {to_yuan_text(received)} 元，待收 {to_yuan_text(outstanding)} 元")
+        detail_note = (f"分项收款 {to_yuan_text(amount_cents)} 元（{split}），"
+                       f"回单号 {receipt_no or '—'}，累计已收 {to_yuan_text(received)} 元，"
+                       f"待收 {to_yuan_text(outstanding)} 元")
     db.execute(
         "UPDATE records SET paid_date = ?, receipt_no = COALESCE(NULLIF(?, ''), receipt_no) WHERE id = ?",
         (received_date, receipt_no, record_id),
@@ -893,11 +959,17 @@ def fee_update(record_id):
                    updated_at = ? WHERE id = ?""",
         list(values.values()) + [now_text(), g.user["name"], now_text(), record_id],
     )
-    _log(db, record_id, "fee", rec["status"], rec["status"],
+    # 资金过夜费计入应收，改了要重算待收与状态
+    received, closed, outstanding, before = _recalc_receipt_state(db, record_id)
+    _log(db, record_id, "fee", before, "completed" if closed else before,
          "费用登记：" + "，".join(f"{label} {to_yuan_text(values[col])} 元"
                                  for _f, label, col in FEE_TYPES))
     db.commit()
-    flash("费用已登记", "ok")
+    if before == "completed" and not closed:
+        flash(f"费用已登记。资金过夜费计入应收后还差 {to_yuan_text(outstanding)} 元，"
+              f"业务已退回「待收款」继续收款", "error")
+    else:
+        flash("费用已登记", "ok")
     return redirect(url_for("records.detail", record_id=record_id))
 
 

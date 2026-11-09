@@ -159,19 +159,23 @@ def proceed(application, client, depts):
     r = client.get("/todos/?tab=collect")
     check("财务「待收款跟进」里出现该单", "测试客户A" in r.get_data(as_text=True))
     r = client.post(f"/records/{record_id}/receipts", data={
-        "received_amount": "14000", "received_date": "2026-11-05",
+        "trade_fee": "12000", "retention": "2000", "received_date": "2026-11-05",
         "receipt_no": "HD20261105001", "note": "首款",
     }, follow_redirects=True)
     body = r.get_data(as_text=True)
     with application.app_context():
         db = get_db()
         rec = db.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
+        retention_got = db.execute(
+            """SELECT COALESCE(SUM(retention_cents), 0) s FROM record_receipts
+                WHERE record_id = ?""", (record_id,)).fetchone()["s"]
     check("收到部分款后仍是待收款", "待收款" in body and rec["status"] == "pending_payment",
           rec["status"])
     check("待收 = 17000 − 14000 = 3000 元",
           rec["unpaid_amount_cents"] == 300000, f"实际 {rec['unpaid_amount_cents']}")
-    check("累计已收 14000 元", rec["received_amount_cents"] == 1400000,
+    check("首款把留存利润一并收满", rec["received_amount_cents"] == 1400000,
           f"实际 {rec['received_amount_cents']}")
+    check("分项：留存利润已收满 2000 元", retention_got == 200000, f"实际 {retention_got}")
     check("公司实收同步为累计已收 14000 元", rec["company_income_cents"] == 1400000,
           f"实际 {rec['company_income_cents']}")
     check("回单编号已记录", rec["receipt_no"] == "HD20261105001")
@@ -183,7 +187,7 @@ def proceed(application, client, depts):
 
     print("\n=== 6.1 尾款收齐自动结清 ===")
     r = client.post(f"/records/{record_id}/receipts", data={
-        "received_amount": "3000", "received_date": "2026-11-06", "receipt_no": "HD20261106002",
+        "trade_fee": "3000", "received_date": "2026-11-06", "receipt_no": "HD20261106002",
     }, follow_redirects=True)
     body = r.get_data(as_text=True)
     with application.app_context():

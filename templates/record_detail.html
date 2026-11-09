@@ -165,35 +165,97 @@
                   background:{% if progress.closed %}#15803d{% else %}#7c3aed{% endif %}"></div>
     </div>
     <div style="font-size:11.5px;color:var(--muted-2)">
-      应收合计（贸易费 {{ money(progress.trade_fee) }} + 留存利润 {{ money(progress.retention) }}）
+      应收合计（贸易费 {{ money(progress.trade_fee) }} + 留存利润 {{ money(progress.retention) }}
+      + 资金过夜费 {{ money(progress.overnight) }}）
       = 预存 {{ money(progress.prepaid) }} + 已收 {{ money(progress.received) }} + 待收 {{ money(progress.outstanding) }}
     </div>
   </div>
 
-  <div class="kv-grid" style="padding:0 18px 12px">
-    <div class="kv money"><div class="k">贸易费</div><div class="v">{{ money(progress.trade_fee) }}</div></div>
-    <div class="kv money"><div class="k">留存利润</div><div class="v">{{ money(progress.retention) }}</div></div>
-    <div class="kv money"><div class="k">应收合计</div><div class="v">{{ money(progress.receivable) }}</div></div>
-    <div class="kv money"><div class="k">预存抵扣</div><div class="v">{{ money(progress.prepaid) }}</div></div>
-    <div class="kv money"><div class="k">累计已收</div><div class="v">{{ money(progress.received) }}</div></div>
-    <div class="kv money {% if progress.outstanding < 0 %}neg{% endif %}">
-      <div class="k">待收金额</div><div class="v">{{ money(progress.outstanding) }}</div>
-    </div>
+  <div class="table-wrap" style="margin:0 0 10px">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>收款项目</th>
+          <th class="num">应收</th>
+          <th class="num">预存抵扣</th>
+          <th class="num">已收</th>
+          <th class="num">待收</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in item_rows if it.counts %}
+        <tr>
+          <td>{{ it.label }}</td>
+          <td class="num">{{ money(it.needed) }}</td>
+          <td class="num">{{ money(it.prepaid) }}</td>
+          <td class="num">{{ money(it.received) }}</td>
+          <td class="num {% if it.outstanding > 0 %}neg{% endif %}">
+            {% if it.outstanding > 0 %}{{ money(it.outstanding) }}
+            {% elif it.outstanding < 0 %}{{ money(it.outstanding) }}（多收）
+            {% else %}已收齐{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        <tr style="font-weight:600;background:var(--surface-2)">
+          <td>应收合计</td>
+          <td class="num">{{ money(progress.receivable) }}</td>
+          <td class="num">{{ money(progress.prepaid) }}</td>
+          <td class="num">{{ money(progress.received) }}</td>
+          <td class="num {% if progress.outstanding > 0 %}neg{% endif %}">{{ money(progress.outstanding) }}</td>
+        </tr>
+        {% for it in item_rows if not it.counts %}
+        <tr style="color:var(--muted)">
+          <td>{{ it.label }}<span style="font-size:11px"> · 留痕</span></td>
+          <td class="num">—</td>
+          <td class="num">—</td>
+          <td class="num">{{ money(it.received) }}</td>
+          <td class="num">—</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 
   {% if actions.can_receive %}
   <div class="card-body" style="border-top:1px solid var(--border);padding-top:14px">
     <form method="post" action="{{ url_for('records.receipt_add', record_id=rec.id) }}">
-      <div class="form-grid four">
+      <div class="sub-head">
+        <span class="sub-title">本次收款（按项目分别填列）</span>
+        <button type="button" class="btn-mini" id="recvFillAll">按待收全额填入</button>
+      </div>
+      <div class="form-grid three">
+        {% for it in item_rows if it.counts %}
         <div class="field">
-          <label>本次收款金额（元）</label>
-          <input type="text" name="received_amount" id="fRecvAmount" inputmode="decimal" class="num-input"
-                 placeholder="留空 = 未收完 / 填 0 = 特批结清">
-          <span class="hint">
-            {% if actions.can_close_short %}留空 = 还有款项待收；填 0 = 主管特批结清，剩余不再追收
-            {% else %}留空 = 还有款项待收；未收齐就结清属特殊情况，需主管特批{% endif %}
-          </span>
+          <label>{{ it.label }}（元）</label>
+          <input type="number" step="0.01" min="0" name="{{ it.key }}"
+                 class="num-input recv-item" data-need="{{ it.outstanding }}"
+                 placeholder="{% if it.outstanding > 0 %}待收 {{ money(it.outstanding) }}{% else %}已收齐{% endif %}">
         </div>
+        {% endfor %}
+      </div>
+
+      <div class="sub-block">
+        <div class="sub-head">
+          <span class="sub-title">费用留痕（选填）</span>
+          <span class="sub-hint">随这笔款一起登记，只记录不参与应收与收齐判定</span>
+        </div>
+        <div class="form-grid three">
+          {% for it in item_rows if not it.counts %}
+          <div class="field">
+            <label>{{ it.label }}（元）</label>
+            <input type="number" step="0.01" min="0" name="{{ it.key }}"
+                   class="num-input recv-item" placeholder="0.00">
+          </div>
+          {% endfor %}
+          <div class="field">
+            <label>本次合计（元）</label>
+            <input type="text" id="fRecvTotal" class="num-input" value="0.00" readonly
+                   title="各项相加，自动算">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-grid four" style="margin-top:12px">
         <div class="field">
           <label>收款日期</label>
           <input type="date" name="received_date" id="fRecvDate" value="{{ today_str }}">
@@ -202,10 +264,13 @@
           <label>回单编号</label>
           <input type="text" name="receipt_no" id="fRecvNo" placeholder="银行流水号 / 回单号">
         </div>
-        <div class="field">
+        <div class="field" style="grid-column:span 2">
           <label>备注</label>
           <input type="text" name="note" placeholder="如 首款 / 尾款 / 客户承诺下周付">
         </div>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted-2);margin-top:8px">
+        各项全留空 = 还有款项待收；各项都填 0 = {% if actions.can_close_short %}主管特批结清，剩余不再追收{% else %}特批结清（需主管权限）{% endif %}
       </div>
       <div class="form-actions" style="border:0;padding:12px 0 0;background:transparent">
         <button class="btn btn-primary" type="submit">登记收款</button>
@@ -233,6 +298,13 @@
             {% if it.is_close %}<span class="tag tag-completed">结清</span>
             {% elif it.amount_cents %}{{ money(it.amount_cents) }}
             {% else %}<span style="color:var(--muted-2)">未收款</span>{% endif %}
+            {% set parts = [] %}
+            {% for f, label, rc, counts, col in RECEIPT_ITEMS %}
+              {% if it[rc] %}{% set _ = parts.append(label ~ ' ' ~ money(it[rc])) %}{% endif %}
+            {% endfor %}
+            {% if parts %}
+            <div style="font-size:11px;color:var(--muted-2);font-weight:400">{{ parts | join(' / ') }}</div>
+            {% endif %}
           </td>
           <td>{{ it.receipt_no or '—' }}</td>
           <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
@@ -355,7 +427,7 @@
       </div>
       <div class="form-actions" style="border:0;padding:12px 0 0;background:transparent">
         <span style="margin-right:auto;font-size:11.5px;color:var(--muted-2)">
-          费用合计 {{ money(fee_total(rec)) }} 元 · 暂只登记，不参与金额计算
+          费用合计 {{ money(fee_total(rec)) }} 元 · 资金过夜费计入应收，其余三项只登记；改动后待收会重算
         </span>
         <button class="btn btn-primary" type="submit">保存费用</button>
       </div>
@@ -516,12 +588,62 @@
     var amount = btn.getAttribute('data-amount');
     var date = btn.getAttribute('data-date');
     var card = document.getElementById('receiptCard');
-    if (amount) { var a = document.getElementById('fRecvAmount'); if (a) a.value = amount; }
     if (date) { var d = document.getElementById('fRecvDate'); if (d) d.value = date; }
     if (no) { var n = document.getElementById('fRecvNo'); if (n) n.value = no; }
+    // 回单金额是「本次到账合计」，与待收合计一致时按各项待收填满；
+    // 不一致（部分付款）则不动各项，交给人工按项拆分，避免拆错科目
+    var filled = false;
+    if (amount) {
+      var num = parseFloat(String(amount).replace(/[,，¥￥元\s]/g, ''));
+      var need = totalNeed();
+      if (isFinite(num) && Math.abs(num - need) < 0.01 && need > 0) {
+        fillAll();
+        filled = true;
+      }
+    }
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    if (window.wbToast) window.wbToast('已填入识别值，请核对后再提交');
+    if (window.wbToast) {
+      window.wbToast(filled
+        ? '已按回单金额填满各项待收，请核对后再提交'
+        : '已填入回单编号与日期；本次金额请按各项实际到账填写');
+    }
   });
+})();
+
+// 收款分项：合计实时算 + 「按待收全额填入」
+(function () {
+  var items = Array.prototype.slice.call(document.querySelectorAll('.recv-item'));
+  if (!items.length) return;
+  var totalEl = document.getElementById('fRecvTotal');
+
+  var numOf = function (el) {
+    var v = parseFloat(String(el.value || '').replace(/[,，¥￥元\s]/g, ''));
+    return isFinite(v) ? v : 0;
+  };
+  var render = function () {
+    if (!totalEl) return;
+    var sum = items.reduce(function (acc, el) { return acc + numOf(el); }, 0);
+    totalEl.value = (Math.round(sum * 100) / 100).toFixed(2);
+  };
+  var fillAll = function () {
+    items.forEach(function (el) {
+      var need = parseFloat(el.getAttribute('data-need') || '0') / 100;
+      if (need > 0) el.value = need.toFixed(2);
+    });
+    render();
+  };
+  window.totalNeed = function () {
+    return items.reduce(function (acc, el) {
+      var need = parseFloat(el.getAttribute('data-need') || '0') / 100;
+      return acc + (need > 0 ? need : 0);
+    }, 0);
+  };
+  window.fillAll = fillAll;
+
+  items.forEach(function (el) { el.addEventListener('input', render); });
+  var all = document.getElementById('recvFillAll');
+  if (all) all.addEventListener('click', fillAll);
+  render();
 })();
 </script>
 {% endblock %}

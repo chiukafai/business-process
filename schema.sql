@@ -140,7 +140,15 @@ CREATE TABLE IF NOT EXISTS records (
 CREATE TABLE IF NOT EXISTS record_receipts (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   record_id     INTEGER NOT NULL REFERENCES records(id) ON DELETE CASCADE,
-  amount_cents  INTEGER NOT NULL DEFAULT 0,
+  amount_cents  INTEGER NOT NULL DEFAULT 0,   -- 本次收款合计（= 下面六项之和）
+  -- 分项填列：前三项是应收的组成部分，逐项跟踪收齐进度；
+  -- 后三项为费用留痕，随款登记、不参与应收判定
+  trade_fee_cents INTEGER NOT NULL DEFAULT 0, -- 本次收到的贸易费
+  retention_cents INTEGER NOT NULL DEFAULT 0, -- 本次收到的留存利润
+  overnight_cents INTEGER NOT NULL DEFAULT 0, -- 本次收到的资金过夜费
+  channel_cents   INTEGER NOT NULL DEFAULT 0, -- 本次涉及渠道提成
+  finance_cents   INTEGER NOT NULL DEFAULT 0, -- 本次涉及财务费用
+  other_cents     INTEGER NOT NULL DEFAULT 0, -- 本次涉及其他费用
   received_date TEXT,
   receipt_no    TEXT,
   note          TEXT,
