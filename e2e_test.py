@@ -110,7 +110,7 @@ def proceed(application, client, depts):
         "dept_id": str(dept_gz), "customer_name": "测试客户A", "biz_type": "代采",
         "prepaid_mode": "后付", "biz_date": "2026-11-01", "fee_rate": "1.5",
         "biz_amount": "1000000", "channel_commission": "2000",
-        "payable_amount": "", "prepaid_amount": "0",
+        "invoice_needed": "1", "prepaid_amount": "0",
         "remark": "端到端测试", "action": "submit",
     }, follow_redirects=True)
     body = r.get_data(as_text=True)
@@ -122,12 +122,14 @@ def proceed(application, client, depts):
         rec = db.execute("SELECT * FROM records ORDER BY id DESC LIMIT 1").fetchone()
         cust = db.execute("SELECT * FROM customers WHERE name = '测试客户A'").fetchone()
     record_id = rec["id"]
-    check("公司实收 = 1000000×1.5%−2000 = 13000 元",
-          rec["company_income_cents"] == 1300000, f"实际 {rec['company_income_cents']}")
-    check("辅助核算 = 1000000−13000 = 987000 元",
-          rec["aux_fee_cents"] == 98700000, f"实际 {rec['aux_fee_cents']}")
-    check("应收留空取辅助核算，待收 = 987000 元",
-          rec["unpaid_amount_cents"] == 98700000, f"实际 {rec['unpaid_amount_cents']}")
+    check("贸易费 = 1000000×1.5% = 15000 元",
+          rec["payable_amount_cents"] == 1500000, f"实际 {rec['payable_amount_cents']}")
+    check("留存利润 = 2000 元", rec["channel_commission_cents"] == 200000,
+          f"实际 {rec['channel_commission_cents']}")
+    check("公司实收 = 累计已收（尚未收款为 0）",
+          rec["company_income_cents"] == 0, f"实际 {rec['company_income_cents']}")
+    check("待收 = 贸易费 15000 + 留存利润 2000 = 17000 元",
+          rec["unpaid_amount_cents"] == 1700000, f"实际 {rec['unpaid_amount_cents']}")
     check("提交后没有已收金额", rec["received_amount_cents"] == 0,
           f"实际 {rec['received_amount_cents']}")
     check("新客户名自动建档", cust is not None and rec["customer_id"] == cust["id"])
@@ -157,7 +159,7 @@ def proceed(application, client, depts):
     r = client.get("/todos/?tab=collect")
     check("财务「待收款跟进」里出现该单", "测试客户A" in r.get_data(as_text=True))
     r = client.post(f"/records/{record_id}/receipts", data={
-        "received_amount": "985000", "received_date": "2026-11-05",
+        "received_amount": "14000", "received_date": "2026-11-05",
         "receipt_no": "HD20261105001", "note": "首款",
     }, follow_redirects=True)
     body = r.get_data(as_text=True)
@@ -166,10 +168,12 @@ def proceed(application, client, depts):
         rec = db.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
     check("收到部分款后仍是待收款", "待收款" in body and rec["status"] == "pending_payment",
           rec["status"])
-    check("待收 = 987000 − 985000 = 2000 元",
-          rec["unpaid_amount_cents"] == 200000, f"实际 {rec['unpaid_amount_cents']}")
-    check("累计已收 985000 元", rec["received_amount_cents"] == 98500000,
+    check("待收 = 17000 − 14000 = 3000 元",
+          rec["unpaid_amount_cents"] == 300000, f"实际 {rec['unpaid_amount_cents']}")
+    check("累计已收 14000 元", rec["received_amount_cents"] == 1400000,
           f"实际 {rec['received_amount_cents']}")
+    check("公司实收同步为累计已收 14000 元", rec["company_income_cents"] == 1400000,
+          f"实际 {rec['company_income_cents']}")
     check("回单编号已记录", rec["receipt_no"] == "HD20261105001")
     with application.app_context():
         cnt = get_db().execute(
@@ -179,7 +183,7 @@ def proceed(application, client, depts):
 
     print("\n=== 6.1 尾款收齐自动结清 ===")
     r = client.post(f"/records/{record_id}/receipts", data={
-        "received_amount": "2000", "received_date": "2026-11-06", "receipt_no": "HD20261106002",
+        "received_amount": "3000", "received_date": "2026-11-06", "receipt_no": "HD20261106002",
     }, follow_redirects=True)
     body = r.get_data(as_text=True)
     with application.app_context():
@@ -194,7 +198,7 @@ def proceed(application, client, depts):
     client.post("/records/new", data={
         "dept_id": str(dept_gz), "customer_name": "测试客户B", "biz_date": "2026-11-02",
         "fee_rate": "2", "biz_amount": "500000", "channel_commission": "0",
-        "payable_amount": "0", "prepaid_amount": "0",
+        "invoice_needed": "0", "prepaid_amount": "0",
         "action": "submit",
     }, follow_redirects=True)
     with application.app_context():

@@ -101,16 +101,15 @@
 
   <div class="kv-grid">
     <div class="kv money"><div class="k">业务金额</div><div class="v">{{ money(rec.biz_amount_cents) }}</div></div>
+    <div class="kv"><div class="k">费率</div><div class="v">{{ rec.fee_rate }}%</div></div>
+    <div class="kv money"><div class="k">贸易费</div><div class="v">{{ money(rec.payable_amount_cents) }}</div></div>
+    <div class="kv money"><div class="k">留存利润</div><div class="v">{{ money(rec.channel_commission_cents) }}</div></div>
     <div class="kv money"><div class="k">公司实收</div><div class="v">{{ money(rec.company_income_cents) }}</div></div>
+    <div class="kv money"><div class="k">预存金额</div><div class="v">{{ money(rec.prepaid_amount_cents) }}</div></div>
+    <div class="kv money"><div class="k">已收金额</div><div class="v">{{ money(rec.received_amount_cents) }}</div></div>
     <div class="kv money {% if rec.unpaid_amount_cents < 0 %}neg{% endif %}">
       <div class="k">待收金额</div><div class="v">{{ money(rec.unpaid_amount_cents) }}</div>
     </div>
-    <div class="kv"><div class="k">费率</div><div class="v">{{ rec.fee_rate }}%</div></div>
-    <div class="kv money"><div class="k">渠道提成</div><div class="v">{{ money(rec.channel_commission_cents) }}</div></div>
-    <div class="kv money"><div class="k">辅助核算费用</div><div class="v">{{ money(rec.aux_fee_cents) }}</div></div>
-    <div class="kv money"><div class="k">应收金额</div><div class="v">{{ money(rec.payable_amount_cents) }}</div></div>
-    <div class="kv money"><div class="k">预存金额</div><div class="v">{{ money(rec.prepaid_amount_cents) }}</div></div>
-    <div class="kv money"><div class="k">已收金额</div><div class="v">{{ money(rec.received_amount_cents) }}</div></div>
   </div>
 </div>
 
@@ -127,8 +126,7 @@
     <div class="kv"><div class="k">报送计划时间</div><div class="v">{{ rec.report_plan_date or '—' }}</div></div>
     <div class="kv"><div class="k">计划出具日期</div><div class="v">{{ rec.issue_plan_date or '—' }}</div></div>
     <div class="kv"><div class="k">是否开票</div>
-      <div class="v">{% if actions.invoice_ready %}{{ invoice_status(rec).label }}
-        {% else %}<span style="color:var(--muted-2)">收款到账后由财务确认</span>{% endif %}</div>
+      <div class="v">{{ invoice_status(rec).label }}</div>
     </div>
     <div class="kv"><div class="k">回单编号</div><div class="v">{{ rec.receipt_no or '—' }}</div></div>
     <div class="kv"><div class="k">收款账户</div><div class="v">{{ rec.receive_account or '—' }}</div></div>
@@ -151,7 +149,7 @@
   </div>
   <div class="card-body" style="padding-bottom:6px">
     <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)">
-      <span>已收 {{ money(progress.prepaid + progress.received) }} / 应收 {{ money(progress.receivable) }}</span>
+      <span>已收 {{ money(progress.prepaid + progress.received) }} / 应收合计 {{ money(progress.receivable) }}</span>
       <span>{{ progress.percent }}%</span>
     </div>
     <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden;margin:8px 0 4px">
@@ -159,12 +157,15 @@
                   background:{% if progress.closed %}#15803d{% else %}#7c3aed{% endif %}"></div>
     </div>
     <div style="font-size:11.5px;color:var(--muted-2)">
-      应收 = 预存 {{ money(progress.prepaid) }} + 已收 {{ money(progress.received) }} + 待收 {{ money(progress.outstanding) }}
+      应收合计（贸易费 {{ money(progress.trade_fee) }} + 留存利润 {{ money(progress.retention) }}）
+      = 预存 {{ money(progress.prepaid) }} + 已收 {{ money(progress.received) }} + 待收 {{ money(progress.outstanding) }}
     </div>
   </div>
 
   <div class="kv-grid" style="padding:0 18px 12px">
-    <div class="kv money"><div class="k">应收金额</div><div class="v">{{ money(progress.receivable) }}</div></div>
+    <div class="kv money"><div class="k">贸易费</div><div class="v">{{ money(progress.trade_fee) }}</div></div>
+    <div class="kv money"><div class="k">留存利润</div><div class="v">{{ money(progress.retention) }}</div></div>
+    <div class="kv money"><div class="k">应收合计</div><div class="v">{{ money(progress.receivable) }}</div></div>
     <div class="kv money"><div class="k">预存抵扣</div><div class="v">{{ money(progress.prepaid) }}</div></div>
     <div class="kv money"><div class="k">累计已收</div><div class="v">{{ money(progress.received) }}</div></div>
     <div class="kv money {% if progress.outstanding < 0 %}neg{% endif %}">
@@ -179,8 +180,11 @@
         <div class="field">
           <label>本次收款金额（元）</label>
           <input type="text" name="received_amount" id="fRecvAmount" inputmode="decimal" class="num-input"
-                 placeholder="留空 = 未收完 / 填 0 = 收款完成">
-          <span class="hint">留空表示还有款项待收；填 0 表示收款到此结束</span>
+                 placeholder="留空 = 未收完 / 填 0 = 特批结清">
+          <span class="hint">
+            {% if actions.can_close_short %}留空 = 还有款项待收；填 0 = 主管特批结清，剩余不再追收
+            {% else %}留空 = 还有款项待收；未收齐就结清属特殊情况，需主管特批{% endif %}
+          </span>
         </div>
         <div class="field">
           <label>收款日期</label>
@@ -247,7 +251,7 @@
   {% endif %}
 </div>
 
-<!-- 开票：收款到账后由财务确认「是否需要开票」，需要才继续跟踪「是否已开票」 -->
+<!-- 开票：登记时选「要 / 不要」，选「要」的收齐后轮转到财务确认「已开票」 -->
 {% if actions.invoice_ready %}
 {% set inv = invoice_status(rec) %}
 <div class="card" id="invoiceCard">
@@ -256,6 +260,11 @@
     <span style="font-size:11.5px;color:var(--muted-2)">{{ inv.label }}</span>
   </div>
   <div class="card-body">
+    {% if rec.invoice_needed == 0 %}
+    <div style="font-size:13px;color:var(--muted)">
+      登记时选了<b>不需要开票</b>，开票环节已自动跳过，本单无需财务确认。
+    </div>
+    {% endif %}
     {% if actions.can_invoice %}
     <form method="post" action="{{ url_for('records.invoice_set', record_id=rec.id) }}" id="invoiceForm">
       <div style="display:flex;gap:22px;align-items:center;flex-wrap:wrap">
@@ -263,12 +272,12 @@
         <label class="check">
           <input type="radio" name="invoice_needed" value="0"
                  {% if rec.invoice_needed == 0 %}checked{% endif %}>
-          不需要开票
+          不需要
         </label>
         <label class="check">
           <input type="radio" name="invoice_needed" value="1"
                  {% if rec.invoice_needed == 1 %}checked{% endif %}>
-          需要开票
+          要
         </label>
       </div>
       <div id="invoicedBox" style="margin-top:12px;padding:10px 12px;background:var(--surface-2);
@@ -282,7 +291,7 @@
       <div class="form-actions" style="border:0;padding:14px 0 0;background:transparent">
         <button class="btn btn-primary" type="submit">保存开票状态</button>
         <span style="font-size:11.5px;color:var(--muted-2)">
-          选「不需要开票」时，不会再出现「是否已开票」
+          选「不需要」时不再出现「是否已开票」，也不会计入待开票清单
         </span>
       </div>
     </form>
@@ -433,6 +442,7 @@
     <div class="timeline">
       {% set acts = {'create':'新建登记','update':'修改内容','submit':'提交（进入收款）','withdraw':'业务员撤回',
                      'reject':'退回修改','receipt':'收款登记','fee':'费用登记','complete':'收款结清',
+                     'invoice':'开票登记','dept':'确认归属部门',
                      'pay':'确认付款（旧流程）','reopen':'撤销完成',
                      'import':'Excel 导入','approve':'审核通过（旧流程）'} %}
       {% for l in logs %}

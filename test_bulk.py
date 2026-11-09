@@ -77,7 +77,7 @@ def main():
         "dept_id": str(dept_id), "customer_name": "批量测试客户", "biz_type": "代采",
         "prepaid_mode": "后付", "biz_date": "2026-11-02", "fee_rate": "1.5",
         "biz_amount": "10000", "channel_commission": "0",
-        "payable_amount": "", "prepaid_amount": "0", "paid_amount": "0",
+        "invoice_needed": "1", "prepaid_amount": "0", "paid_amount": "0",
         "remark": "", "action": "submit",
     }
     login_as(client, "s1")
@@ -176,7 +176,7 @@ def main():
         "dept_id": str(dept_id), "customer_name": "有业务客户丙", "biz_type": "代采",
         "prepaid_mode": "后付", "biz_date": "2026-11-03", "fee_rate": "1.5",
         "biz_amount": "5000", "channel_commission": "0",
-        "payable_amount": "", "prepaid_amount": "0", "paid_amount": "0",
+        "invoice_needed": "1", "prepaid_amount": "0", "paid_amount": "0",
         "remark": "", "action": "submit",
     }, follow_redirects=True)
     login_as(client, "admin", "Admin@2026")

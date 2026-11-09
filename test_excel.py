@@ -33,21 +33,21 @@ def build_xlsx():
         {"序号": 1, "归属部门": "集团总部", "类型": "代采", "预存与否": "后付",
          "月份": "2026/11/01", "报送计划时间": "2026/11/05", "计划出具日期": "2026/11/10",
          "是否开票": "是", "主体公司": "广州华农贸易", "上游公司": "沃田农艺园",
-         "服务费": 100, "业务金额": 500000, "费率": 1.5, "渠道提成": 1000,
+         "渠道提成": 100, "业务金额": 500000, "费率": 1.5, "留存利润": 1000,
          "收款账户": "6222021234567890", "收款银行": "工商银行",
          "备注": "首单", "回单编号": "HD001"},
         {"序号": 2, "归属部门": "集团总部", "类型": "过账", "预存与否": "预存",
          "月份": "2026/11/02", "是否开票": "否", "主体公司": "成都蜀鲜果业",
          "上游公司": "沃田农艺园（无票）", "资金过夜费": 200,
-         "业务金额": 800000, "费率": 2, "渠道提成": 0,
+         "业务金额": 800000, "费率": 2, "留存利润": 0,
          "收款账户": "6228480123456789", "收款银行": "农业银行"},
         {"序号": 3, "归属部门": "集团总部", "类型": "代采", "预存与否": "月结",
          "月份": "2026/11/03", "是否开票": "否", "主体公司": "深圳鲜达供应链",
-         "服务费": 300, "业务金额": 1200000, "费率": "1.2%", "渠道提成": 5000,
+         "渠道提成": 300, "业务金额": 1200000, "费率": "1.2%", "留存利润": 5000,
          "备注": "含税"},
         {"序号": 4, "归属部门": "集团总部", "类型": "自营", "预存与否": "后付",
          "月份": "2026/11/04", "是否开票": "否", "主体公司": "广州顺鑫农业",
-         "财务费用": 20, "业务金额": 300000, "费率": 1, "渠道提成": 0},
+         "财务费用": 20, "业务金额": 300000, "费率": 1, "留存利润": 0},
         {"序号": 5, "归属部门": "集团总部", "类型": "代采", "预存与否": "后付",
          "月份": "2026/11/05", "主体公司": "", "业务金额": 100000, "费率": 1,
          "备注": "缺客户名"},
@@ -100,23 +100,31 @@ def main():
         r3 = db.execute(
             "SELECT * FROM records WHERE customer_name = '成都蜀鲜果业'"
         ).fetchone()
-    check("费率 1.5% + 提成 1000 → 公司实收 6500 元",
-          rec["company_income_cents"] == 650000, f"实际 {rec['company_income_cents']}")
-    check("应付留空 → 自动取辅助核算费用 493500 元",
-          rec["payable_amount_cents"] == 49350000, f"实际 {rec['payable_amount_cents']}")
-    check("费率写成「1.2%」也能识别 → 实收 14400−5000=9400 元",
-          r2["company_income_cents"] == 940000, f"实际 {r2['company_income_cents']}")
+    check("贸易费 = 500000×1.5% = 7500 元",
+          rec["payable_amount_cents"] == 750000, f"实际 {rec['payable_amount_cents']}")
+    check("留存利润取 K 列合计 1000 元",
+          rec["channel_commission_cents"] == 100000, f"实际 {rec['channel_commission_cents']}")
+    check("待收 = 贸易费 7500 + 留存利润 1000 = 8500 元",
+          rec["unpaid_amount_cents"] == 850000, f"实际 {rec['unpaid_amount_cents']}")
+    check("未收款时公司实收 = 0（= 累计已收）",
+          rec["company_income_cents"] == 0, f"实际 {rec['company_income_cents']}")
+    check("费率写成「1.2%」也能识别 → 贸易费 1200000×1.2% = 14400 元",
+          r2["payable_amount_cents"] == 1440000, f"实际 {r2['payable_amount_cents']}")
+    check("第二档留存利润 5000 元", r2["channel_commission_cents"] == 500000,
+          f"实际 {r2['channel_commission_cents']}")
 
     print("\n=== 3. 布尔与日期解析 ===")
-    check("「是」识别为已开票", rec["is_invoiced"] == 1)
+    check("「是」识别为需要开票（登记口径）", rec["invoice_needed"] == 1)
+    check("「否」识别为不需要开票", r2["invoice_needed"] == 0, str(r2["invoice_needed"]))
     check("日期 2026/11/01 解析为 2026-11-01", rec["biz_date"] == "2026-11-01",
           rec["biz_date"])
     check("「预存」识别为预存模式", r3["prepaid_mode"] == "预存", r3["prepaid_mode"])
     check("「月结」识别为月结模式", r2["prepaid_mode"] == "月结", r2["prepaid_mode"])
 
     print("\n=== 3.1 费用分项与上游公司 ===")
-    check("服务费 100 元写入", rec["fee_service_cents"] == 10000, str(rec["fee_service_cents"]))
-    check("服务费 300 元写入（第二档）", r2["fee_service_cents"] == 30000,
+    check("费用明细「渠道提成」100 元写入", rec["fee_service_cents"] == 10000,
+          str(rec["fee_service_cents"]))
+    check("费用明细「渠道提成」300 元写入（第二档）", r2["fee_service_cents"] == 30000,
           str(r2["fee_service_cents"]))
     check("资金过夜费 200 元写入", r3["fee_overnight_cents"] == 20000,
           str(r3["fee_overnight_cents"]))
@@ -136,9 +144,9 @@ def main():
     ws2.append(TEMPLATE_HEADERS)
     rows2 = [
         {"主体公司": "汇总结算客户", "月份": "2026-12", "业务金额": 100000, "费率": 1,
-         "上游公司": "甲供应商（无票）", "服务费": 10},
+         "上游公司": "甲供应商（无票）", "渠道提成": 10},
         {"主体公司": "汇总结算客户（无票）", "月份": "2026-12", "业务金额": 300000, "费率": 2,
-         "上游公司": "乙供应商", "服务费": 20},
+         "上游公司": "乙供应商", "渠道提成": 20},
     ]
     for r in rows2:
         ws2.append([r.get(h) for h in TEMPLATE_HEADERS])
@@ -156,12 +164,45 @@ def main():
         m = merged[0]
         check("金额合计 400,000 元", m["biz_amount_cents"] == 40000000, str(m["biz_amount_cents"]))
         check("费率按金额加权平均 1.75%", abs(m["fee_rate"] - 1.75) < 1e-6, str(m["fee_rate"]))
-        check("公司实收 7,000 元", m["company_income_cents"] == 700000,
-              str(m["company_income_cents"]))
-        check("服务费合计 30 元", m["fee_service_cents"] == 3000, str(m["fee_service_cents"]))
+        check("贸易费 = 400000×1.75% = 7,000 元", m["payable_amount_cents"] == 700000,
+              str(m["payable_amount_cents"]))
+        check("费用明细「渠道提成」合计 30 元", m["fee_service_cents"] == 3000,
+              str(m["fee_service_cents"]))
         check("上游公司去重合并", m["upstream_company"] == "甲供应商、乙供应商",
               str(m["upstream_company"]))
     check("页面提示费率不一致按加权平均", "加权平均" in body2)
+
+    print("\n=== 3.3 贸易计划 K 列（利润1）合计 → 留存利润 ===")
+    wb3 = Workbook()
+    ws3 = wb3.active
+    ws3.append(["大类", "品种", "上游公司", "数量", "单价", "金额", "主体公司",
+                "数量2", "单价2", "金额2", "利润1", "下游公司"])
+    for row3 in (
+        ["茄果蔬菜", "杭椒", "长沙易汐", 100, 6.22, 622, "贸易计划客户", 100, 6.25, 625, 3, "涌之泉"],
+        ["豆菜", "豆角", "长沙易汐", 200, 5.87, 1174, "贸易计划客户", 200, 5.9, 1180, 6, "涌之泉"],
+        ["汇总", "", None, 300, None, 1796, "", 300, None, 1805, 9, ""],
+    ):
+        ws3.append(row3)
+    buf3 = io.BytesIO()
+    wb3.save(buf3)
+    buf3.seek(0)
+    resp3 = client.post("/excel/import", data={"file": (buf3, "贸易计划_测试.xlsx")},
+                        content_type="multipart/form-data", follow_redirects=True)
+    body3 = resp3.get_data(as_text=True)
+    with application.app_context():
+        plan = get_db().execute(
+            "SELECT * FROM records WHERE customer_name = '贸易计划客户'").fetchone()
+    check("贸易计划能导入（2 行明细合并 1 条）", plan is not None)
+    if plan:
+        check("业务金额取「金额」列合计 1,796 元", plan["biz_amount_cents"] == 179600,
+              str(plan["biz_amount_cents"]))
+        check("留存利润取 K 列（利润1）合计 9 元",
+              plan["channel_commission_cents"] == 900, str(plan["channel_commission_cents"]))
+        check("没有费率列时贸易费按 0 计", plan["payable_amount_cents"] == 0,
+              str(plan["payable_amount_cents"]))
+        check("待收 = 贸易费 0 + 留存利润 9 = 900 分",
+              plan["unpaid_amount_cents"] == 900, str(plan["unpaid_amount_cents"]))
+    check("结果页说明留存利润取自 K 列", "K 列" in body3)
 
     print("\n=== 4. 导出列序 ===")
     r = client.get("/excel/export")
@@ -172,7 +213,7 @@ def main():
     check("导出 列序与模板表头完全一致（含上游公司 + 四项费用）",
           headers == TEMPLATE_HEADERS,
           f"实际 {len(headers)} 列")
-    check("导出数据行数 = 5", ws.max_row == 6, f"实际 {ws.max_row - 1} 行")
+    check("导出数据行数 = 6", ws.max_row == 7, f"实际 {ws.max_row - 1} 行")
 
     print("\n=== 5. 空白模板下载 ===")
     r = client.get("/excel/template")

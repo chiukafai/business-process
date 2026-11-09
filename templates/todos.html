@@ -25,7 +25,8 @@
       <thead>
         <tr>
           <th>状态</th><th>主体公司</th><th>归属部门</th><th>登记人</th>
-          <th class="num">业务金额</th><th class="num">应收</th><th class="num">待收</th>
+          <th class="num">业务金额</th><th class="num">应收合计</th>
+          <th class="num">{% if active_tab == 'invoice' %}已收{% else %}待收{% endif %}</th>
           <th>等待</th><th style="width:150px">操作</th>
         </tr>
       </thead>
@@ -37,8 +38,11 @@
           <td>{{ r.dept_name or '' }}</td>
           <td>{{ r.owner_display or r.owner_name or '' }}</td>
           <td class="num">{{ money(r.biz_amount_cents) }}</td>
-          <td class="num">{{ money(r.payable_amount_cents) }}</td>
-          <td class="num {% if r.unpaid_amount_cents < 0 %}neg{% endif %}">{{ money(r.unpaid_amount_cents) }}</td>
+          <td class="num">{{ money(r.payable_amount_cents + r.channel_commission_cents) }}</td>
+          <td class="num {% if r.unpaid_amount_cents < 0 %}neg{% endif %}">
+            {% if active_tab == 'invoice' %}{{ money(r.received_amount_cents) }}
+            {% else %}{{ money(r.unpaid_amount_cents) }}{% endif %}
+          </td>
           <td style="white-space:nowrap" class="{% if r.updated_at | stale %}neg{% endif %}">
             {{ r.updated_at | waited }}
           </td>

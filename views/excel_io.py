@@ -20,22 +20,25 @@ from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES, calc_amou
 
 bp = Blueprint("excel", __name__, url_prefix="/excel")
 
-# 导出模板列序（在原始 26 列基础上：客户名称后插「上游公司」，
-# 「费用类型」拆成四项费用明细，均可被导入端按表头名反向识别）
+# 导出模板列序（客户名称后插「上游公司」，「费用类型」拆成四项费用明细，
+# 均可被导入端按表头名反向识别）
 # 第 9 列对外统一叫「主体公司」（导入端同时认「客户名称」等旧写法）
+# 第 19 列「贸易费」= 业务金额 × 费率（旧名「应收金额」）
+# 第 17 列「留存利润」= 贸易计划 K 列（利润1）合计（旧名「渠道提成」）
 TEMPLATE_HEADERS = [
     "序号", "归属部门", "类型", "预存与否", "月份", "报送计划时间", "计划出具日期",
     "是否开票", "主体公司", "上游公司",
-    "服务费", "资金过夜费", "财务费用", "其他费用",
-    "业务金额", "费率", "渠道提成", "公司实收",
-    "辅助【核算费用，有公式】", "应收金额", "预存金额", "已收金额", "待收金额",
+    "渠道提成", "资金过夜费", "财务费用", "其他费用",
+    "业务金额", "费率", "留存利润", "公司实收",
+    "贸易费", "预存金额", "已收金额", "待收金额",
     "最近收款日期", "收款账户", "收款银行", "付款账户", "付款银行", "备注", "回单编号",
 ]
 
 COL_WIDTHS = [7, 14, 10, 9, 12, 13, 13, 9, 24, 20,
               11, 12, 11, 11,
-              14, 8, 12, 12, 20,
-              12, 12, 12, 12, 12, 20, 18, 20, 18, 26, 16]
+              14, 8, 12, 12,
+              12, 12, 12, 12,
+              20, 18, 20, 18, 26, 16, 16]
 
 # 字段 ← 可接受的表头写法（按顺序优先匹配）。
 # 业务登记模板用前者，贸易计划模板用后者，同一份文件两种叫法都能导。
@@ -51,20 +54,19 @@ FIELD_ALIASES = {
     "upstream_company":   ("上游公司", "上游", "供应商"),
     "category":           ("大类", "品类"),
     "variety":            ("品种", "品名"),
-    "fee_service_cents":  ("服务费",),
+    # 费用明细第一项：现在叫「渠道提成」，老模板里叫「服务费」
+    "fee_service_cents":  ("渠道提成", "服务费"),
     "fee_overnight_cents": ("资金过夜费", "通道费"),
     "fee_finance_cents":  ("财务费用",),
     "fee_other_cents":    ("其他费用",),
     "fee_type":           ("费用类型",),
     "biz_amount":         ("业务金额", "金额", "业务额", "交易金额"),
     "fee_rate":           ("费率",),
-    "channel_commission": ("渠道提成", "提成"),
-    "payable_amount":     ("应收金额", "应付金额"),
+    # 留存利润：新模板 / 贸易计划的 K 列（利润1）
+    "channel_commission": ("留存利润", "利润1", "利润"),
+    "payable_amount":     ("贸易费", "应收金额", "应付金额"),
     "prepaid_amount":     ("预存金额",),
     "received_amount":    ("已收金额", "付款金额", "已收款金额"),
-    "__computed_income":  ("公司实收",),
-    "__computed_aux":     ("辅助",),
-    "__computed_unpaid":  ("待收金额", "未付款金额", "未收金额"),
     "paid_date":          ("最近收款日期", "打款日期", "收款日期", "付款日期"),
     "receive_account":    ("收款账户",),
     "receive_bank":       ("收款银行",),
@@ -80,8 +82,9 @@ REQUIRED_FIELDS = ("customer_name", "biz_amount")
 # 汇总 / 小计行的文字特征，这类行不导入
 SUMMARY_WORDS = ("合计", "汇总", "小计", "总计", "总和")
 
-# 未映射列里不值得提示的（自动编号、Excel 自动列名、约定不导入的列）
-IGNORED_HEADERS = {"序号", "编号", "列1", "列2", "列3", "列4", "下游公司"}
+# 未映射列里不值得提示的（自动编号、Excel 自动列名、系统按公式重算的列）
+IGNORED_HEADERS = {"序号", "编号", "列1", "列2", "列3", "列4", "下游公司",
+                   "公司实收", "待收金额", "辅助核算费用"}
 
 TRUE_WORDS = {"是", "有", "真", "y", "yes", "true", "1", "√", "已开"}
 
@@ -107,6 +110,17 @@ def _map_columns(header_cells):
             if alias in normalized:
                 col_map[field] = normalized.index(alias)
                 break
+
+    # 「服务费」改名为「渠道提成」后的兼容处理：
+    # 老模板里同时有「服务费」（费用明细）和「渠道提成」（当时的提成 = 现在的留存利润）两列。
+    # 两列都在、又没有「留存利润 / 利润1」时，按老口径拆开，
+    # 否则留存利润会被当成费用明细导进去、金额口径直接错位。
+    has_service = "服务费" in normalized
+    has_channel = "渠道提成" in normalized
+    has_retention = any(x in normalized for x in ("留存利润", "利润1", "利润"))
+    if has_service and has_channel and not has_retention:
+        col_map["fee_service_cents"] = normalized.index("服务费")
+        col_map["channel_commission"] = normalized.index("渠道提成")
     return col_map, normalized
 
 
@@ -257,11 +271,23 @@ def import_page():
     dept_missing = {}      # 主体公司 → 行号（档案没挂部门，归属留空待确认）
     # 同一「主体公司 + 归属部门 + 月份」的明细行先归堆，最后合成一条业务
     buckets, bucket_order = {}, []
+    # 合计行里 K 列（利润1）的值，用于核对明细行加总是否等于表尾合计
+    sheet_retention = None
+
+    retention_idx = col_map.get("channel_commission")
+
+    def _retention_of(row):
+        """取一行里留存利润（K 列 / 利润1 / 留存利润）的值。"""
+        if retention_idx is None or retention_idx >= len(row):
+            return None
+        return to_cents(row[retention_idx])
 
     for offset, row in enumerate(rows[header_row_idx + 1:], start=header_row_idx + 2):
         if row is None or all(c in (None, "") for c in row):
             continue
         if offset in formula_rows:
+            if sheet_retention is None:
+                sheet_retention = _retention_of(row)
             skipped_rows.append({"row": offset, "reason": "含合计/汇总公式，不作为业务导入"})
             continue
 
@@ -280,6 +306,8 @@ def import_page():
             renamed[raw_name_text] = customer_name
         if (_looks_like_summary(row[:3], raw_customer)
                 or customer_name in ("", "合计", "小计", "总计")):
+            if sheet_retention is None:
+                sheet_retention = _retention_of(row)
             skipped_rows.append({"row": offset, "reason": "合计行或主体公司为空"})
             continue
         if len(customer_name) > 120:
@@ -296,11 +324,23 @@ def import_page():
             bad_rows.append({"row": offset, "customer": customer_name, "reason": "费率格式不正确"})
             continue
 
-        commission = to_cents(cell("channel_commission")) or 0
+        # 留存利润：贸易计划的 K 列（利润1）逐行利润，加总即为合计项
+        retention = to_cents(cell("channel_commission")) or 0
+        # 表里若带「贸易费 / 应收金额」列，只用来核对，最终金额一律按公式重算
         raw_payable = cell("payable_amount")
         payable = to_cents(raw_payable) or 0
         prepaid = to_cents(cell("prepaid_amount")) or 0
         received = to_cents(cell("received_amount")) or 0
+
+        # 「是否开票」：是 / 是（已开票）/ 否 / 空
+        raw_invoice = str(cell("is_invoiced") or "").strip()
+        if raw_invoice == "":
+            invoice_needed, is_invoiced = None, 0
+        elif _to_bool(raw_invoice) or raw_invoice.startswith("是"):
+            invoice_needed = 1
+            is_invoiced = 1 if "已开" in raw_invoice else 0
+        else:
+            invoice_needed, is_invoiced = 0, 0
 
         # 部门优先级：表格里写了 → 按表格；没写 → 按客户档案里该主体公司的归属部门；
         # 档案也没挂 → 留空（待确认），不按导入人的部门兜底。
@@ -346,10 +386,9 @@ def import_page():
             "biz_date": biz_date,
             "report_plan_date": parse_date(cell("report_plan_date")),
             "issue_plan_date": parse_date(cell("issue_plan_date")),
-            # 「是否开票」现在分两级：Excel 写「是」= 已开票且需要开票；
-            # 其余留空（None）表示还没确认是否需要开票，等财务在详情页登记
-            "is_invoiced": 1 if _to_bool(cell("is_invoiced")) else 0,
-            "invoice_needed": 1 if _to_bool(cell("is_invoiced")) else None,
+            # 「是否开票」：登记口径是「要 / 不要」，已开票由财务在收齐后确认
+            "is_invoiced": is_invoiced,
+            "invoice_needed": invoice_needed,
             "customer_name": customer_name,
             "upstream_company": upstream,
             "category": str(cell("category") or "").strip(),
@@ -357,7 +396,7 @@ def import_page():
             "fees": fees,
             "biz_amount_cents": biz_amount,
             "fee_rate": fee_rate,
-            "channel_commission_cents": commission,
+            "channel_commission_cents": retention,
             "payable_cents": payable,
             "payable_given": raw_payable not in (None, ""),
             "prepaid_cents": prepaid,
@@ -369,7 +408,6 @@ def import_page():
             "pay_bank": str(cell("pay_bank") or "").strip(),
             "remark": str(cell("remark") or "").strip(),
             "receipt_no": str(cell("receipt_no") or "").strip(),
-            "excel_income": to_cents(cell("__computed_income")),
         }
 
         key = (customer_name, dept_id, biz_date)
@@ -386,11 +424,12 @@ def import_page():
         customer_name, dept_id, biz_date = key
 
         total_amount = sum(i["biz_amount_cents"] for i in items)
-        commission = sum(i["channel_commission_cents"] for i in items)
+        # 留存利润 = 贸易计划 K 列（利润1）逐行利润加总 = 表尾合计项
+        retention = sum(i["channel_commission_cents"] for i in items)
         prepaid = sum(i["prepaid_cents"] for i in items)
         received = sum(i["received_cents"] for i in items)
         given_payable = [i["payable_cents"] for i in items if i["payable_given"]]
-        payable = sum(given_payable) if given_payable else 0
+        file_payable = sum(given_payable) if given_payable else None
         fees = {col: sum(i["fees"][col] for i in items) for _f, _l, col in FEE_TYPES}
 
         # 费率：一致就沿用；不一致按金额加权平均，避免汇总后金额口径漂移
@@ -408,22 +447,27 @@ def import_page():
                           + f"%），已按金额加权平均 {fee_rate}% 计算",
             })
 
-        amounts = calc_amounts(total_amount, fee_rate, commission, payable, prepaid, received)
-        # 应收金额全空时默认取辅助核算费用
-        if not given_payable:
-            payable = amounts["aux_fee_cents"]
-            amounts = calc_amounts(total_amount, fee_rate, commission, payable, prepaid, received)
+        # K 列（利润1）明细全空、但表尾合计有值、且整张表只合成一条业务时，直接用合计项
+        single_bucket = len(bucket_order) == 1
+        if not retention and sheet_retention and single_bucket:
+            retention = sheet_retention
+        elif (single_bucket and sheet_retention is not None and retention
+              and abs(retention - sheet_retention) > 1):
+            warned.append({
+                "row": bucket["row"], "customer": customer_name,
+                "reason": f"K 列（利润1）明细加总 {money(retention)} 与表尾合计 "
+                          f"{money(sheet_retention)} 不一致，已按明细加总",
+            })
 
-        # 口径核对：Excel 里的「公司实收」与系统算的是否一致
-        excel_incomes = [i["excel_income"] for i in items if i["excel_income"] not in (None, 0)]
-        if len(excel_incomes) == len(items):
-            excel_income = sum(excel_incomes)
-            if abs(excel_income - amounts["company_income_cents"]) > 1:
-                warned.append({
-                    "row": bucket["row"], "customer": customer_name,
-                    "reason": f"Excel 公司实收 {money(excel_income)}，"
-                              f"系统按口径算 {money(amounts['company_income_cents'])}",
-                })
+        amounts = calc_amounts(total_amount, fee_rate, retention, prepaid, received)
+        payable = amounts["payable_amount_cents"]
+        # 表里若带「贸易费 / 应收金额」列，与公式不一致时提示（金额一律按公式）
+        if file_payable is not None and abs(file_payable - payable) > 1:
+            warned.append({
+                "row": bucket["row"], "customer": customer_name,
+                "reason": f"Excel 里的贸易费 {money(file_payable)} 与公式"
+                          f"（业务金额 × 费率 = {money(payable)}）不一致，已按公式取值",
+            })
 
         upstream = "、".join(_uniq([i["upstream_company"] for i in items
                                     if i["upstream_company"]]))[:200]
@@ -452,12 +496,14 @@ def import_page():
             "report_plan_date": min(report_dates) if report_dates else None,
             "issue_plan_date": min(issue_dates) if issue_dates else None,
             "is_invoiced": 1 if any(i["is_invoiced"] for i in items) else 0,
-            "invoice_needed": 1 if any(i["is_invoiced"] for i in items) else None,
+            "invoice_needed": (1 if any(i["invoice_needed"] == 1 for i in items)
+                               else (0 if all(i["invoice_needed"] == 0 for i in items)
+                                     else None)),
             "customer_name": customer_name,
             "upstream_company": upstream,
             "biz_amount_cents": total_amount,
             "fee_rate": fee_rate,
-            "channel_commission_cents": commission,
+            "channel_commission_cents": retention,
             "payable_amount_cents": payable,
             "prepaid_amount_cents": prepaid,
             "received_amount_cents": received,
@@ -530,7 +576,14 @@ def import_page():
             "（同一主体公司 + 归属部门 + 月份算一条）"
         )
     if "fee_rate" not in col_map:
-        notes.append("文件里没有「费率」列，公司实收按 0 计算，导入后可在详情页逐条补录")
+        notes.append("文件里没有「费率」列，贸易费（业务金额 × 费率）按 0 计算，"
+                     "导入后可在业务详情里逐条补录费率")
+    if retention_idx is None:
+        notes.append("文件里没有「留存利润」（贸易计划 K 列「利润1」）列，留存利润按 0 计，"
+                     "导入后可手工补录")
+    elif sheet_retention:
+        notes.append(f"留存利润取自 K 列合计项：{money(sum(r['channel_commission_cents'] for r in ok_rows))} 元"
+                     if ok_rows else "留存利润取自 K 列合计项")
     if "dept_name" not in col_map:
         if dept_from_master:
             pairs = "、".join(f"{k}→{v}" for k, v in list(dept_from_master.items())[:8])
@@ -566,7 +619,7 @@ def import_page():
         "groups": groups_preview,
         "notes": notes,
         "header_row": header_row_idx + 1,
-        "warned_rule": "Excel 里「公司实收」与系统计算结果不一致",
+        "warned_rule": "金额口径核对：K 列合计 / 表里的贸易费与系统按公式算的不一致",
     }
     return render_template("import.html", result=result, depts=depts)
 
@@ -646,18 +699,25 @@ def export():
     from utils import status_label
 
     for r in rows:
+        # 「是否开票」：否 = 登记时选了不要；是 = 需要开票；是（已开票）= 财务已确认
+        if r["invoice_needed"] == 0:
+            inv_text = "否"
+        elif r["invoice_needed"] is None:
+            inv_text = ""
+        else:
+            inv_text = "是（已开票）" if r["is_invoiced"] else "是"
         line = [
             r["id"], r["dept_name"] or "", r["biz_type"] or "", r["prepaid_mode"] or "",
             month_value(r["biz_date"]), r["report_plan_date"] or "",
             r["issue_plan_date"] or "",
-            "是" if r["is_invoiced"] else "否", r["customer_label"] or r["customer_name"],
+            inv_text, r["customer_label"] or r["customer_name"],
             r["upstream_company"] or "",
             r["fee_service_cents"] / 100, r["fee_overnight_cents"] / 100,
             r["fee_finance_cents"] / 100, r["fee_other_cents"] / 100,
             r["biz_amount_cents"] / 100, r["fee_rate"], r["channel_commission_cents"] / 100,
-            r["company_income_cents"] / 100, r["aux_fee_cents"] / 100,
-            r["payable_amount_cents"] / 100, r["prepaid_amount_cents"] / 100,
-            r["received_amount_cents"] / 100, r["unpaid_amount_cents"] / 100,
+            r["company_income_cents"] / 100, r["payable_amount_cents"] / 100,
+            r["prepaid_amount_cents"] / 100, r["received_amount_cents"] / 100,
+            r["unpaid_amount_cents"] / 100,
             r["paid_date"] or "", r["receive_account"] or "", r["receive_bank"] or "",
             r["pay_account"] or "", r["pay_bank"] or "", r["remark"] or "",
             r["receipt_no"] or "",
@@ -668,7 +728,7 @@ def export():
         ws.append(line)
 
     # 金额列两位小数 + 冻结首行 + 筛选
-    money_cols = [11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23]
+    money_cols = [11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22]
     for row_idx in range(2, ws.max_row + 1):
         for col_idx in money_cols:
             c = ws.cell(row=row_idx, column=col_idx)

@@ -235,7 +235,7 @@ resp = client.post("/records/new", data={
     "dept_id": str(dept), "customer_name": "费用测试客户", "biz_type": "代采",
     "prepaid_mode": "后付", "biz_year": "2025", "biz_month_no": "3",
     "fee_rate": "1.5", "biz_amount": "10000", "channel_commission": "0",
-    "payable_amount": "", "prepaid_amount": "0", "paid_amount": "0",
+    "invoice_needed": "1", "prepaid_amount": "0", "paid_amount": "0",
     "upstream_company": "沃田农艺园",
     "fee_service": "100", "fee_overnight": "50.5",
     "fee_finance": "20", "fee_other": "1.25",
@@ -248,7 +248,7 @@ check("按年月保存为 2025-03-01", rec is not None and rec["biz_date"] == "2
       str(dict(rec) if rec else None))
 if rec:
     check("上游公司保存成功", rec["upstream_company"] == "沃田农艺园", str(rec["upstream_company"]))
-    check("服务费 100 元", rec["fee_service_cents"] == 10000, str(rec["fee_service_cents"]))
+    check("渠道提成（费用明细）100 元", rec["fee_service_cents"] == 10000, str(rec["fee_service_cents"]))
     check("资金过夜费 50.5 元", rec["fee_overnight_cents"] == 5050, str(rec["fee_overnight_cents"]))
     check("财务费用 20 元", rec["fee_finance_cents"] == 2000, str(rec["fee_finance_cents"]))
     check("其他费用 1.25 元", rec["fee_other_cents"] == 125, str(rec["fee_other_cents"]))
@@ -283,7 +283,7 @@ ws = wb.active
 headers = [c.value for c in ws[1]]
 check("导出表头第 5 列为「月份」", headers[4] == "月份", str(headers[:6]))
 check("导出含「上游公司」列", "上游公司" in headers)
-check("导出含四项费用列", all(h in headers for h in ("服务费", "资金过夜费", "财务费用", "其他费用")))
+check("导出含四项费用列", all(h in headers for h in ("渠道提成", "资金过夜费", "财务费用", "其他费用")))
 check("导出不再有「费用类型」列", "费用类型" not in headers)
 
 col = headers.index("月份") + 1

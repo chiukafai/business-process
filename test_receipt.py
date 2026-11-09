@@ -68,9 +68,9 @@ FORM = {
     "biz_year": "2026",
     "biz_month_no": "11",
     "biz_amount": "100000",
-    "fee_rate": "1",
-    "channel_commission": "0",
-    "payable_amount": "1200",   # 应收 1200 元
+    "fee_rate": "1.2",          # 贸易费 = 100000 × 1.2% = 1200 元
+    "channel_commission": "0",  # 留存利润（导入贸易计划时取 K 列合计）
+    "invoice_needed": "1",      # 登记时要选「要 / 不要」
     "prepaid_amount": "0",
     "fee_service": "",
     "fee_overnight": "",
@@ -87,7 +87,10 @@ with application.app_context():
 row = rec(rid)
 check("提交后状态 = pending_payment（待收款）", row["status"] == "pending_payment", row["status"])
 check("已收金额初始为 0", row["received_amount_cents"] == 0, str(row["received_amount_cents"]))
-check("待收 = 应收 120000 分", row["unpaid_amount_cents"] == 120000, str(row["unpaid_amount_cents"]))
+check("贸易费 = 100000×1.2% = 1200 元", row["payable_amount_cents"] == 120000,
+      str(row["payable_amount_cents"]))
+check("待收 = 贸易费 120000 + 留存利润 0 = 120000 分", row["unpaid_amount_cents"] == 120000,
+      str(row["unpaid_amount_cents"]))
 check("收款结清标记为 0", row["receipt_closed"] == 0)
 
 detail = body(f"/records/{rid}")
@@ -170,7 +173,7 @@ check("待收回到 90000 分", row["unpaid_amount_cents"] == 90000, str(row["un
 
 # ---------- 7. 收满自动结清 ----------
 print("\n=== 7. 分批收满自动转已收齐 ===")
-FORM2 = dict(FORM, customer_name="收满测试客户", payable_amount="1000")
+FORM2 = dict(FORM, customer_name="收满测试客户", fee_rate="1")  # 贸易费 1000 元
 client.post("/records/new", data=dict(FORM2, action="submit"), follow_redirects=True)
 with application.app_context():
     rid2 = get_db().execute("SELECT MAX(id) m FROM records").fetchone()["m"]
@@ -219,7 +222,9 @@ check("列表不再出现「未付款合计」", "未付款合计" not in lst)
 # ---------- 10. 导出表头 ----------
 print("\n=== 10. 导出列名随口径调整 ===")
 from views.excel_io import TEMPLATE_HEADERS  # noqa: E402
-check("导出用「应收金额」", "应收金额" in TEMPLATE_HEADERS)
+check("导出用「贸易费」", "贸易费" in TEMPLATE_HEADERS)
+check("导出用「留存利润」", "留存利润" in TEMPLATE_HEADERS)
+check("导出不再有「辅助核算费用」", "辅助核算费用" not in "".join(TEMPLATE_HEADERS))
 check("导出用「已收金额」", "已收金额" in TEMPLATE_HEADERS)
 check("导出用「待收金额」", "待收金额" in TEMPLATE_HEADERS)
 check("导出不再有「未付款金额」", "未付款金额" not in TEMPLATE_HEADERS)
@@ -372,64 +377,97 @@ check("每一轮收款确认后通知业务员",
       len(sent) > 1 and "wx_staff" in sent[1][0], str(sent[1:2]))
 check("收款通知带金额", len(sent) > 1 and "收款" in sent[1][1], str(sent[1:2]))
 
-# ---------- 14. 开票：收款后由财务做两级确认 ----------
-print("\n=== 14. 开票：收款到账后由财务确认「需不需要 / 是否已开」 ===")
-detail_ok = client.get(f"/records/{rid}").get_data(as_text=True)
-check("收款到账后详情页出现开票卡片", "是否需要开票" in detail_ok)
-check("开票卡片默认待确认", "待确认是否需要开票" in detail_ok)
+# ---------- 14. 开票：登记时选「要/不要」，收齐后转财务确认 ----------
+print("\n=== 14. 开票：选「要」收齐后转财务，选「不要」自动跳过 ===")
+detail_ok = client.get(f"/records/{rid2}").get_data(as_text=True)
+check("收齐后详情页出现开票卡片", "是否需要开票" in detail_ok)
+check("登记时选了要 → 待开票", "需要开票 · 待开票" in detail_ok)
 
-r = client.post(f"/records/{rid}/invoice", data={"invoice_needed": "0"},
+r = client.post(f"/records/{rid2}/invoice", data={"invoice_needed": "0"},
                 follow_redirects=True)
-row = rec(rid)
-check("选「不需要开票」写入 0", row["invoice_needed"] == 0, str(row["invoice_needed"]))
+row = rec(rid2)
+check("财务改选「不需要」写入 0", row["invoice_needed"] == 0, str(row["invoice_needed"]))
 check("不需要开票时清掉已开票标记", row["is_invoiced"] == 0, str(row["is_invoiced"]))
-check("页面显示「不需要开票」", "不需要开票" in r.get_data(as_text=True))
+check("页面提示开票环节已跳过", "已自动跳过" in r.get_data(as_text=True))
 
-client.post(f"/records/{rid}/invoice", data={"invoice_needed": "1"}, follow_redirects=True)
-row = rec(rid)
-check("选「需要开票」但未开 → 待开票",
+client.post(f"/records/{rid2}/invoice", data={"invoice_needed": "1"}, follow_redirects=True)
+row = rec(rid2)
+check("选「要」但未开 → 待开票",
       row["invoice_needed"] == 1 and row["is_invoiced"] == 0,
       f"{row['invoice_needed']}/{row['is_invoiced']}")
 check("页面显示「需要开票 · 待开票」",
-      "需要开票 · 待开票" in client.get(f"/records/{rid}").get_data(as_text=True))
+      "需要开票 · 待开票" in client.get(f"/records/{rid2}").get_data(as_text=True))
 
-client.post(f"/records/{rid}/invoice", data={"invoice_needed": "1", "is_invoiced": "1"},
+client.post(f"/records/{rid2}/invoice", data={"invoice_needed": "1", "is_invoiced": "1"},
             follow_redirects=True)
-row = rec(rid)
-check("需要开票 + 已开票 → is_invoiced=1", row["is_invoiced"] == 1, str(row["is_invoiced"]))
-check("页面显示「已开票」", "已开票" in client.get(f"/records/{rid}").get_data(as_text=True))
+row = rec(rid2)
+check("要开票 + 已开票 → is_invoiced=1", row["is_invoiced"] == 1, str(row["is_invoiced"]))
+check("页面显示「已开票」", "已开票" in client.get(f"/records/{rid2}").get_data(as_text=True))
 
 # 不需要开票时，即便传了已开票也不记
-client.post(f"/records/{rid}/invoice", data={"invoice_needed": "0", "is_invoiced": "1"},
+client.post(f"/records/{rid2}/invoice", data={"invoice_needed": "0", "is_invoiced": "1"},
             follow_redirects=True)
-row = rec(rid)
-check("选「不需要开票」时不保留已开票",
+row = rec(rid2)
+check("选「不需要」时不保留已开票",
       row["invoice_needed"] == 0 and row["is_invoiced"] == 0,
       f"{row['invoice_needed']}/{row['is_invoiced']}")
 
-# 没收到款之前不给登记
-client.post("/records/new", data=dict(FORM, customer_name="没收款的单", action="save"),
+# 未收齐之前不给登记（收款到账不算，要收齐）
+client.post("/records/new", data=dict(FORM, customer_name="没收齐的单", action="save"),
             follow_redirects=True)
 with application.app_context():
     rid_nopay = get_db().execute("SELECT MAX(id) m FROM records").fetchone()["m"]
 r = client.post(f"/records/{rid_nopay}/invoice", data={"invoice_needed": "1"},
                 follow_redirects=True)
 row = rec(rid_nopay)
-check("未收到款不能登记开票",
-      row["invoice_needed"] is None and "收款到账后才能登记开票" in r.get_data(as_text=True))
+check("未收齐不能登记开票",
+      row["invoice_needed"] == 1 and "款项收齐后才能登记开票" in r.get_data(as_text=True),
+      str(row["invoice_needed"]))
 html_nopay = client.get(f"/records/{rid_nopay}").get_data(as_text=True)
-check("未收款时详情页不出现开票卡片", 'id="invoiceCard"' not in html_nopay)
-check("未收款时登记信息提示收款后再确认", "收款到账后由财务确认" in html_nopay)
+check("未收齐时详情页不出现开票卡片", 'id="invoiceCard"' not in html_nopay)
+
+# 财务待办：已收齐 + 要开票 + 未开票 → 出现在「待我确认开票」
+with application.app_context():
+    db = get_db()
+    db.execute(
+        """INSERT OR IGNORE INTO users (username, password_hash, name, role, permissions,
+                                        is_active, must_change_password, dept_id)
+           VALUES (?,?,?,?,?,1,0,?)""",
+        ("cw1", generate_password_hash("Cw@2026"), "财务乙", "finance",
+         '["record.invoice","record.view_all"]', dept_id),
+    )
+    db.execute("UPDATE users SET password_hash = ? WHERE username = 'cw1'",
+               (generate_password_hash("Cw@2026"),))
+    db.commit()
+client4 = application.test_client()
+client4.post("/login", data={"username": "cw1", "password": "Cw@2026"})
+
+client.post(f"/records/{rid2}/invoice", data={"invoice_needed": "1"}, follow_redirects=True)
+todo_inv = client4.get("/todos/?tab=invoice").get_data(as_text=True)
+check("财务待办有「待我确认开票」", "待我确认开票" in todo_inv)
+check("需要开票的已收齐单据出现在待开票清单", "收满测试客户" in todo_inv)
+client.post(f"/records/{rid2}/invoice", data={"invoice_needed": "1", "is_invoiced": "1"},
+            follow_redirects=True)
+todo_inv2 = client4.get("/todos/?tab=invoice").get_data(as_text=True)
+check("已开票后从待办里消失", "收满测试客户" not in todo_inv2)
 
 # 权限：资管有收款权限但没有开票权限
-r = client3.post(f"/records/{rid}/invoice", data={"invoice_needed": "1"})
+r = client3.post(f"/records/{rid2}/invoice", data={"invoice_needed": "0"})
 check("无开票权限者被拦（资管也不行）", r.status_code == 302, str(r.status_code))
-check("被拦后状态没被改动", rec(rid)["invoice_needed"] == 0, str(rec(rid)["invoice_needed"]))
+check("被拦后状态没被改动", rec(rid2)["invoice_needed"] == 1, str(rec(rid2)["invoice_needed"]))
 
-# 登记表单里不再有「是否开票」勾选
-r = client.get("/records/new")
-check("登记表单不再有开票勾选框",
-      'name="is_invoiced"' not in r.get_data(as_text=True))
+# 登记表单：要 / 不要 单选（不再有「是否已开票」勾选）
+form_html = client.get("/records/new").get_data(as_text=True)
+check("登记表单有「要 / 不要」单选",
+      'name="invoice_needed" value="1"' in form_html
+      and 'name="invoice_needed" value="0"' in form_html)
+check("登记表单仍不出现「是否已开票」勾选", 'name="is_invoiced"' not in form_html)
+
+# 未选是否开票时不允许保存
+r = client.post("/records/new", data={k: v for k, v in FORM.items()
+                                      if k != "invoice_needed"} | {"customer_name": "没选开票的单"},
+                follow_redirects=True)
+check("没选「要/不要」时保存被拦", "请选择是否需要开票" in r.get_data(as_text=True))
 
 print("\n" + "=" * 50)
 print(f"通过 {passed} 项，失败 {failed} 项")

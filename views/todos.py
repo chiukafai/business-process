@@ -1,9 +1,11 @@
 """我的待办：按权限与状态实时计算，不落表。
 
-流程：登记 → 报批中 → 提交进「待收款」→ **资管确认收款**（业务员这一步不被提醒）
-      → 每一轮收款确认后回头通知业务员 → 收齐「已收齐」→ 财务登记开票与费用。
+流程：登记（选是否开票）→ 报批中 → 提交进「待收款」→ **资管确认收款**
+      （业务员这一步不被提醒）→ 每一轮收款确认后回头通知业务员
+      → 贸易费与留存利润都收齐「已收齐」
+      → 需要开票的轮转到**财务确认开票**，不需要开票的自动跳过。
 
-所以「待收款」是资管的活，业务员只在收款到账后才收到通知。
+所以「待收款」是资管的活、「待开票」是财务的活，业务员只在收款到账后收到通知。
 """
 from flask import Blueprint, g, render_template, request
 
@@ -19,6 +21,8 @@ TODO_META = {
                 "action_label": "去确认"},
     "collect": {"label": "待收款跟进", "hint": "本部门还没收齐的业务，可协助登记收款",
                 "action_label": "去收款"},
+    "invoice": {"label": "待我确认开票", "hint": "已收齐且登记时选了「要开票」的业务，确认开票后流程结束",
+                "action_label": "去开票"},
     "revise":  {"label": "待我修改", "hint": "被退回，需要你修改后重新提交",
                 "action_label": "去修改"},
     "mine":    {"label": "我的报批中", "hint": "还没提交、或待确认归属部门的业务",
@@ -32,7 +36,7 @@ META_OWNER_RECEIPT = {
     "action_label": "查看",
 }
 
-TAB_ORDER = ("receipt", "collect", "revise", "mine")
+TAB_ORDER = ("receipt", "collect", "invoice", "revise", "mine")
 
 
 def _dept_clause(user, alias="r"):
@@ -60,10 +64,17 @@ def receipt_mode(user):
     return None
 
 
+def is_invoice_staff(user):
+    """是不是「确认开票」的人（财务部，record.invoice）。管理员不参与日常提醒。"""
+    if not user or user["role"] == "admin":
+        return False
+    return has_perm(user, "record.invoice")
+
+
 def build_todos(user):
     """返回 {kind: [记录行]}。没有权限的分类给空列表，模板按 tab_order 渲染。"""
     db = get_db()
-    result = {"receipt": [], "collect": [], "revise": [], "mine": []}
+    result = {"receipt": [], "collect": [], "invoice": [], "revise": [], "mine": []}
     if not user:
         return result
 
@@ -101,6 +112,16 @@ def build_todos(user):
             params + [user["id"]],
         ).fetchall()
 
+    if is_invoice_staff(user):
+        # 财务的活：已收齐 + 登记时选了「要开票」+ 还没确认已开票。
+        # 选「不要」的单据 invoice_needed = 0，自动跳过这一步，不进这里。
+        result["invoice"] = db.execute(
+            base.format(
+                cond="r.status = 'completed' AND COALESCE(r.is_invoiced, 0) = 0 "
+                     "AND COALESCE(r.invoice_needed, 1) = 1"
+            )
+        ).fetchall()
+
     result["revise"] = db.execute(
         base.format(cond="r.status = 'rejected' AND r.owner_id = ?"), [user["id"]]
     ).fetchall()
@@ -125,6 +146,8 @@ def visible_tabs(user):
         tabs.append("receipt")
     if mode != "staff" and _can_collect(user):
         tabs.append("collect")
+    if is_invoice_staff(user):
+        tabs.append("invoice")
     tabs += ["revise", "mine"]
     return tuple(tabs)
 
@@ -142,21 +165,20 @@ def todo_counts(user):
     tabs = visible_tabs(user)
     mode = receipt_mode(user)
     receipt_todo = len(todos["receipt"]) if mode == "staff" else 0
+    invoice_todo = len(todos["invoice"]) if "invoice" in tabs else 0
+    collect_todo = len(todos["collect"]) if "collect" in tabs else 0
     return {
         # receipt 只统计「等我确认」的量；业务员的到账进度单独放 receipt_doing
         "receipt": receipt_todo,
         "receipt_doing": len(todos["receipt"]) if mode == "owner" else 0,
         "receipt_label": "待我确认收款" if mode == "staff" else "收款进行中",
-        "collect": len(todos["collect"]) if "collect" in tabs else 0,
+        "collect": collect_todo,
+        "invoice": invoice_todo,
         "revise": len(todos["revise"]),
         "mine": len(todos["mine"]),
-        # 导航红点只算「等我动作」的：资管待确认 + 待我修改 + 需要我跟进的收款。
+        # 导航红点只算「等我动作」的：资管待确认 + 待开票 + 需要我跟进的收款 + 待我修改。
         # 业务员的「收款进行中」只是进度，不计红点（到账由企业微信另行通知）。
-        "total": (
-            receipt_todo
-            + (len(todos["collect"]) if "collect" in tabs else 0)
-            + len(todos["revise"])
-        ),
+        "total": receipt_todo + invoice_todo + collect_todo + len(todos["revise"]),
     }
 
 

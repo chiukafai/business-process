@@ -86,25 +86,25 @@ CREATE TABLE IF NOT EXISTS records (
   biz_date             TEXT,                       -- 4 时间
   report_plan_date     TEXT,                       -- 5 报送计划时间
   issue_plan_date      TEXT,                       -- 6 计划出具日期
-  is_invoiced          INTEGER NOT NULL DEFAULT 0, -- 7 是否已开票（需 invoice_needed=1 才有意义）
-  invoice_needed       INTEGER,                    -- 是否需要开票：NULL=待确认 / 0=不需要 / 1=需要
+  is_invoiced          INTEGER NOT NULL DEFAULT 0, -- 7 是否已开票（收齐后由财务确认）
+  invoice_needed       INTEGER,                    -- 是否需要开票：登记时选 0=不要 / 1=要；NULL=历史的待确认
   customer_id          INTEGER REFERENCES customers(id), -- 客户档案
   customer_name        TEXT    NOT NULL,           -- 8 客户名称（快照，导出用）
   upstream_company     TEXT,                       -- 上游公司（供应商，C 列）
   fee_type             TEXT,                       -- 9 费用类型（旧字段，已改为下方四项分列）
-  fee_service_cents    INTEGER NOT NULL DEFAULT 0, -- 费用明细：服务费
+  fee_service_cents    INTEGER NOT NULL DEFAULT 0, -- 费用明细：渠道提成（原「服务费」，付给渠道）
   fee_overnight_cents  INTEGER NOT NULL DEFAULT 0, -- 费用明细：资金过夜费（原「通道费」）
   fee_finance_cents    INTEGER NOT NULL DEFAULT 0, -- 费用明细：财务费用
   fee_other_cents      INTEGER NOT NULL DEFAULT 0, -- 费用明细：其他费用
   biz_amount_cents     INTEGER NOT NULL DEFAULT 0, -- 10 业务金额
   fee_rate             REAL    NOT NULL DEFAULT 0, -- 11 费率（填 1.5 表示 1.5%）
-  channel_commission_cents INTEGER NOT NULL DEFAULT 0, -- 12 渠道提成
-  company_income_cents INTEGER NOT NULL DEFAULT 0, -- 13 公司实收（自动算）
-  aux_fee_cents        INTEGER NOT NULL DEFAULT 0, -- 14 辅助核算费用（自动算）
-  payable_amount_cents INTEGER NOT NULL DEFAULT 0, -- 15 应付金额
+  channel_commission_cents INTEGER NOT NULL DEFAULT 0, -- 12 留存利润（贸易计划 K 列合计，原「渠道提成」）
+  company_income_cents INTEGER NOT NULL DEFAULT 0, -- 13 公司实收（= 累计已收，实际到账）
+  aux_fee_cents        INTEGER NOT NULL DEFAULT 0, -- 14 辅助核算费用（已停用，仅保留历史值）
+  payable_amount_cents INTEGER NOT NULL DEFAULT 0, -- 15 贸易费（= 业务金额 × 费率，公式锁定）
   prepaid_amount_cents INTEGER NOT NULL DEFAULT 0, -- 16 预存金额
   paid_amount_cents    INTEGER NOT NULL DEFAULT 0, -- 17 付款金额（历史列，现由 received_amount_cents 取代）
-  unpaid_amount_cents  INTEGER NOT NULL DEFAULT 0, -- 18 待收金额（自动算：应收 − 预存 − 已收）
+  unpaid_amount_cents  INTEGER NOT NULL DEFAULT 0, -- 18 待收金额（自动算：贸易费 + 留存利润 − 预存 − 已收）
   paid_date            TEXT,                       -- 19 打款日期
   receive_account      TEXT,                       -- 20 收款账户
   receive_bank         TEXT,                       -- 21 收款银行

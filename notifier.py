@@ -147,8 +147,16 @@ def _receipt_targets(db):
     return [r["wecom_userid"] for r in receipt_staff(db) if r["wecom_userid"]]
 
 
+def _invoice_targets(db):
+    """收齐后需要开票的，提醒有开票权限的财务人员。"""
+    from workflow import invoice_staff
+    return [r["wecom_userid"] for r in invoice_staff(db) if r["wecom_userid"]]
+
+
 def notify_next(db, record_id, event, extra=""):
     """流程节点变化时通知下一步负责人。任何异常都只记录不抛出。"""
+    from utils import needs_invoice
+
     try:
         cfg = config(db)
         if not cfg["enabled"]:
@@ -164,24 +172,32 @@ def notify_next(db, record_id, event, extra=""):
         if rec is None:
             return
 
+        fee = int(rec["payable_amount_cents"] or 0) / 100
+        retention = int(rec["channel_commission_cents"] or 0) / 100
+
         if event == "submit":
             # 待收款 = 资管确认款项，业务员这一步不提醒
             targets = _receipt_targets(db)
-            tip = (f"业务已提交，待确认收款。应收 {rec['payable_amount_cents'] / 100:,.2f} 元，"
+            tip = (f"业务已提交，待确认收款。应收合计 {fee + retention:,.2f} 元"
+                   f"（贸易费 {fee:,.2f} + 留存利润 {retention:,.2f}），"
                    f"请确认客户款项是否到账。")
         elif event == "receipt":
             # 资管确认了一轮收款 → 回头告知登记该业务的业务员
             targets = [rec["owner_wx"]] if rec["owner_wx"] else []
             tip = extra or (f"收款已确认 {rec['received_amount_cents'] / 100:,.2f} 元，"
                             f"尚待收 {rec['unpaid_amount_cents'] / 100:,.2f} 元。")
+        elif event == "paid":
+            # 收齐后：通知登记人；需要开票的，同时轮转到财务
+            need_inv = needs_invoice(rec)
+            targets = ([rec["owner_wx"]] if rec["owner_wx"] else []) \
+                + (_invoice_targets(db) if need_inv else [])
+            tip = (f"款项已收齐，累计已收 {rec['received_amount_cents'] / 100:,.2f} 元。"
+                   + ("需要开票，请财务确认开票。" if need_inv else "本单不需要开票，流程结束。"))
         else:
             targets = [rec["owner_wx"]] if rec["owner_wx"] else []
-            if event == "reject":
-                tip = f"业务被退回：{extra or '未填写原因'}。修改后可重新提交。"
-            else:
-                tip = (f"款项已收齐，累计已收 {rec['received_amount_cents'] / 100:,.2f} 元，"
-                       f"请及时登记费用。")
+            tip = f"业务被退回：{extra or '未填写原因'}。修改后可重新提交。"
 
+        targets = list(dict.fromkeys(t for t in targets if t))
         if not targets:
             return
         content = "\n".join([

@@ -113,7 +113,7 @@ def main():
         "dept_id": str(depts["甲部门"]), "customer_name": "测试客户甲", "biz_type": "代采",
         "prepaid_mode": "后付", "biz_date": "2026-11-01", "fee_rate": "1.5",
         "biz_amount": "100000", "channel_commission": "0",
-        "payable_amount": "", "prepaid_amount": "0", "paid_amount": "0",
+        "invoice_needed": "1", "prepaid_amount": "0", "paid_amount": "0",
         "remark": "删除测试", "action": "submit",
     }, follow_redirects=True)
     with application.app_context():

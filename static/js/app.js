@@ -84,16 +84,16 @@
     const render = function () {
       const amt = num('biz_amount');
       const rate = num('fee_rate');
-      const comm = num('channel_commission');
-      const payable = num('payable_amount');
+      const retention = num('channel_commission');   // 留存利润（K 列合计）
       const prepaid = num('prepaid_amount');
       const paid = num('received_amount');   // 已收金额（只读，由收款登记累计）
 
-      const income = Math.round((amt * rate / 100 - comm) * 100) / 100;
-      const aux = Math.round((amt - income) * 100) / 100;
-      const unpaid = Math.round((payable - prepaid - paid) * 100) / 100;
+      // 贸易费 = 业务金额 × 费率（锁定）；应收合计 = 贸易费 + 留存利润
+      const tradeFee = Math.round(amt * rate / 100 * 100) / 100;
+      const receivable = Math.round((tradeFee + retention) * 100) / 100;
+      const unpaid = Math.round((receivable - prepaid - paid) * 100) / 100;
 
-      // 费用明细四项合计（仅登记，不参与公司实收/待收计算）
+      // 费用明细四项合计（仅登记，不参与贸易费/待收计算）
       let feeTotal = 0;
       document.querySelectorAll('.fee-item').forEach(function (el) {
         const n = parseFloat(String(el.value || '').replace(/[,，¥￥元\s]/g, ''));
@@ -107,31 +107,25 @@
         el.textContent = text + ' 元';
         el.classList.toggle('neg', !!negative);
       };
-      set('calcIncome', fmt(income));
-      set('calcAux', fmt(aux));
+      set('calcTradeFee', fmt(tradeFee));
+      set('calcRetention', fmt(retention));
+      set('calcReceivable', fmt(receivable));
       set('calcFee', fmt(feeTotal));
       set('calcUnpaid', fmt(unpaid), unpaid < 0);
       set('calcUnpaidTop', fmt(unpaid), unpaid < 0);
 
-      // 应收金额未手填时，随辅助核算费用联动
-      const payableEl = $('payable_amount');
-      if (payableEl && !payableEl.dataset.touched && !payableEl.dataset.locked) {
-        payableEl.value = (aux).toFixed(2);
-      }
+      // 贸易费只读展示，跟公式联动
+      const feeEl = $('trade_fee');
+      if (feeEl) feeEl.value = tradeFee.toFixed(2);
     };
 
-    ['biz_amount', 'fee_rate', 'channel_commission', 'payable_amount',
-     'prepaid_amount'].forEach(function (id) {
+    ['biz_amount', 'fee_rate', 'channel_commission', 'prepaid_amount'].forEach(function (id) {
       const el = $(id);
       if (el) el.addEventListener('input', render);
     });
     document.querySelectorAll('.fee-item').forEach(function (el) {
       el.addEventListener('input', render);
     });
-    const payableEl = $('payable_amount');
-    if (payableEl) {
-      payableEl.addEventListener('input', function () { payableEl.dataset.touched = '1'; });
-    }
     render();
   }
 

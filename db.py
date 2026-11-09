@@ -19,7 +19,8 @@ PERMISSIONS = [
     ("record.view_dept",       "查看本部门全部业务", "查看", ["manager"]),
     ("record.view_all",        "查看全部部门业务",   "查看", ["finance"]),
     ("record.pay",             "收款登记 / 费用登记 / 录回单", "收款", ["finance"]),
-    ("record.invoice",         "开票登记（收款后）",  "收款", ["finance"]),
+    ("record.invoice",         "开票确认（收齐后）",  "收款", ["finance"]),
+    ("record.close_short",     "收款未收齐・特批结清", "收款", ["manager"]),
     ("record.import",          "Excel 导入业务",     "数据", ["staff", "manager"]),
     ("record.export",          "导出 Excel",         "数据", ["manager", "finance"]),
     ("customer.view",          "查看客户档案",       "客户", ["staff", "manager", "finance"]),
@@ -280,6 +281,29 @@ def _migrate(db):
         "WHERE is_invoiced = 1 AND invoice_needed IS NULL"
     )
 
+    # 4.16 金额口径改造（一次性重算历史数据）：
+    #   应收金额 → 贸易费 = 业务金额 × 费率
+    #   渠道提成 → 留存利润（列名不变）
+    #   应收合计 = 贸易费 + 留存利润；公司实收 = 累计已收；待收 = 应收合计 − 预存 − 已收
+    done_amount = db.execute(
+        "SELECT value FROM app_settings WHERE key = 'amount_recalc_v1'"
+    ).fetchone()
+    if not done_amount:
+        db.execute(
+            """UPDATE records SET
+                 payable_amount_cents =
+                   CAST(ROUND(biz_amount_cents * fee_rate / 100.0) AS INTEGER),
+                 company_income_cents = received_amount_cents,
+                 unpaid_amount_cents =
+                   CAST(ROUND(biz_amount_cents * fee_rate / 100.0) AS INTEGER)
+                   + channel_commission_cents
+                   - prepaid_amount_cents - received_amount_cents"""
+        )
+        db.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('amount_recalc_v1', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = '1'"
+        )
+
     # 4.2 一次性回填开票权限：财务默认拥有（「是否开票」改为收款后由财务登记）
     done4 = db.execute(
         "SELECT value FROM app_settings WHERE key = 'perm_backfill_v4'"
@@ -299,6 +323,28 @@ def _migrate(db):
                 )
         db.execute(
             "INSERT INTO app_settings (key, value) VALUES ('perm_backfill_v4', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = '1'"
+        )
+
+    # 4.25 一次性回填「特批结清」权限：主管默认拥有（未收齐就结清属特殊情况）
+    done5 = db.execute(
+        "SELECT value FROM app_settings WHERE key = 'perm_backfill_v5'"
+    ).fetchone()
+    if not done5:
+        for row in db.execute("SELECT id, role, permissions FROM users").fetchall():
+            if row["role"] != "manager":
+                continue
+            try:
+                codes = json.loads(row["permissions"] or "[]")
+            except ValueError:
+                codes = []
+            if "record.close_short" not in codes:
+                db.execute(
+                    "UPDATE users SET permissions = ? WHERE id = ?",
+                    (json.dumps(codes + ["record.close_short"], ensure_ascii=False), row["id"]),
+                )
+        db.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('perm_backfill_v5', '1') "
             "ON CONFLICT(key) DO UPDATE SET value = '1'"
         )
 

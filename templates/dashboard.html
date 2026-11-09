@@ -19,7 +19,7 @@
   <div class="stat">
     <div class="stat-label">本月公司实收</div>
     <div class="stat-value">{{ money(month_stats.income) }}</div>
-    <div class="stat-hint">按费率减渠道提成计算</div>
+    <div class="stat-hint">按实际到账累计（累计已收）</div>
   </div>
   <div class="stat">
     <div class="stat-label">待收款总额</div>
@@ -32,6 +32,7 @@
     <div class="stat-hint">
       {% if counts.receipt %}{{ todo_badge.receipt_label }} {{ counts.receipt }} · {% endif %}
       {% if counts.receipt_doing %}收款进行中 {{ counts.receipt_doing }} · {% endif %}
+      {% if counts.invoice %}待确认开票 {{ counts.invoice }} · {% endif %}
       待修改 {{ counts.revise }}
     </div>
   </div>

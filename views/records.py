@@ -12,9 +12,9 @@ from notifier import notify_next
 from workflow import can_invoice as can_register_invoice
 from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES,
                    calc_amounts, clean_company_name, customer_label,
-                   fee_total_cents, month_bounds, month_value, now_text,
-                   parse_date, parse_month, receipt_progress, status_label,
-                   to_cents, to_rate, to_yuan_text, today)
+                   fee_total_cents, month_bounds, month_value, needs_invoice,
+                   now_text, parse_date, parse_month, receipt_progress,
+                   status_label, to_cents, to_rate, to_yuan_text, today)
 
 bp = Blueprint("records", __name__, url_prefix="/records")
 
@@ -110,6 +110,8 @@ def _read_month(form):
 def _read_form(form, db=None, rec=None):
     """读取表单并校验。返回 (data, errors)。
 
+    金额口径：贸易费 = 业务金额 × 费率（公式锁定，不由表单填）；
+    留存利润来自贸易计划的 K 列合计，允许手工修正；
     收款金额不在登记表单里改，统一走「收款登记」，所以这里只读已收原值。
     """
     errors = []
@@ -170,23 +172,33 @@ def _read_form(form, db=None, rec=None):
         errors.append("费率需在 0 ~ 100 之间（填 1.5 表示 1.5%）")
         fee_rate = 0.0
 
-    channel_commission_cents = to_cents(form.get("channel_commission"))
-    if channel_commission_cents is None:
-        errors.append("渠道提成格式不正确")
-        channel_commission_cents = 0
+    # 留存利润：导入贸易计划时取 K 列（利润1）合计，也可手工修正
+    retention_cents = to_cents(form.get("channel_commission"))
+    if retention_cents is None:
+        errors.append("留存利润格式不正确")
+        retention_cents = 0
 
-    payable_raw = (form.get("payable_amount") or "").strip()
-    payable_amount_cents = to_cents(payable_raw)
-    if payable_amount_cents is None:
-        errors.append("应付金额格式不正确")
-        payable_amount_cents = 0
-
+    # 贸易费按公式算，表单里不再接收手填值（列名沿用 payable_amount_cents）
     prepaid_amount_cents = to_cents(form.get("prepaid_amount"))
     if prepaid_amount_cents is None:
         errors.append("预存金额格式不正确")
         prepaid_amount_cents = 0
 
     received_amount_cents = int(rec["received_amount_cents"] or 0) if rec else 0
+
+    # 是否开票：登记时必须明确选「要 / 不要」
+    raw_invoice = (form.get("invoice_needed") or "").strip()
+    prev_needed = rec["invoice_needed"] if rec else None
+    if raw_invoice in ("0", "1"):
+        invoice_needed = int(raw_invoice)
+    else:
+        invoice_needed = prev_needed
+        errors.append("请选择是否需要开票（要 / 不要）")
+    # 选「不要」时把已开票标记清掉，避免留下无意义的已开票状态
+    if invoice_needed == 0:
+        is_invoiced = 0
+    else:
+        is_invoiced = int(rec["is_invoiced"] or 0) if rec else 0
 
     # 费用明细：四项分列填列（不再选费用类型）
     fee_values = {}
@@ -211,17 +223,9 @@ def _read_form(form, db=None, rec=None):
         errors.append("归属部门必填")
 
     amounts = calc_amounts(
-        biz_amount_cents, fee_rate, channel_commission_cents,
-        payable_amount_cents, prepaid_amount_cents, received_amount_cents,
+        biz_amount_cents, fee_rate, retention_cents,
+        prepaid_amount_cents, received_amount_cents,
     )
-
-    # 应收金额留空时默认取「辅助核算费用」，避免待收被算成负数
-    if payable_raw == "":
-        payable_amount_cents = amounts["aux_fee_cents"]
-        amounts = calc_amounts(
-            biz_amount_cents, fee_rate, channel_commission_cents,
-            payable_amount_cents, prepaid_amount_cents, received_amount_cents,
-        )
 
     data = {
         "dept_id": dept_id,
@@ -230,15 +234,15 @@ def _read_form(form, db=None, rec=None):
         "biz_date": biz_date,
         "report_plan_date": parse_date(form.get("report_plan_date")),
         "issue_plan_date": parse_date(form.get("issue_plan_date")),
-        # 「是否开票」已挪到收款后，由财务（record.invoice）在详情页登记；
-        # 这里不再读表单，新建时用库默认 0，编辑时保留原值不动。
+        # 「是否需要开票」登记时由业务员选；「是否已开票」收齐后由财务登记
+        "invoice_needed": invoice_needed,
+        "is_invoiced": is_invoiced,
         "customer_id": customer_id,
         "customer_name": customer_name,
         "upstream_company": clean_company_name(form.get("upstream_company")),
         "biz_amount_cents": biz_amount_cents,
         "fee_rate": fee_rate,
-        "channel_commission_cents": channel_commission_cents,
-        "payable_amount_cents": payable_amount_cents,
+        "channel_commission_cents": retention_cents,
         "prepaid_amount_cents": prepaid_amount_cents,
         "paid_date": rec["paid_date"] if rec else None,
         "receive_account": (form.get("receive_account") or "").strip(),
@@ -488,9 +492,13 @@ def detail(record_id):
         # 费用登记：收到款项之后
         "can_fee": can_register_fee(me, rec),
         "can_reject": rec["status"] == "pending_payment" and can_pay,
-        # 开票：收款到账后，由财务（record.invoice）登记
+        # 开票：收齐（贸易费 + 留存利润）之后才轮到财务（record.invoice）
         "can_invoice": can_register_invoice(me),
-        "invoice_ready": bool(rec["received_amount_cents"]) or rec["status"] == "completed",
+        "invoice_ready": bool(rec["receipt_closed"]) or rec["status"] == "completed",
+        "invoice_pending": (bool(rec["receipt_closed"]) or rec["status"] == "completed")
+                           and needs_invoice(rec) and not int(rec["is_invoiced"] or 0),
+        # 未收齐就结清 = 特殊情况，需要主管特批
+        "can_close_short": has_perm(me, "record.close_short"),
         "can_reopen": rec["status"] == "completed" and is_admin,
         # 流转时间轴：仅管理员与财务可见
         "show_logs": is_admin or can_pay,
@@ -649,7 +657,11 @@ def reject(record_id):
 # ---------- 收款 ----------
 
 def _recalc_receipt_state(db, record_id):
-    """按收款流水重算累计已收与状态。返回 (已收分, 是否结清, 待收分, 原状态)。"""
+    """按收款流水重算累计已收与状态。返回 (已收分, 是否结清, 待收分, 原状态)。
+
+    应收合计 = 贸易费 + 留存利润；两项都收满（待收 ≤ 0）才自动结清。
+    公司实收 = 累计已收（实际到账），随收款一起更新。
+    """
     rec = db.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
     agg = db.execute(
         """SELECT COALESCE(SUM(amount_cents), 0) AS total,
@@ -662,19 +674,22 @@ def _recalc_receipt_state(db, record_id):
 
     amounts = calc_amounts(
         rec["biz_amount_cents"], rec["fee_rate"], rec["channel_commission_cents"],
-        rec["payable_amount_cents"], rec["prepaid_amount_cents"], received,
+        rec["prepaid_amount_cents"], received,
     )
     outstanding = amounts["unpaid_amount_cents"]
     # 收满了也自动结清，避免金额已齐却还挂在「待收款」
-    if not closed and outstanding <= 0 and int(rec["payable_amount_cents"] or 0) > 0:
+    receivable = amounts["payable_amount_cents"] + int(rec["channel_commission_cents"] or 0)
+    if not closed and outstanding <= 0 and receivable > 0:
         closed = True
 
     status = "completed" if closed else "pending_payment"
     db.execute(
         """UPDATE records SET received_amount_cents = ?, unpaid_amount_cents = ?,
+                  payable_amount_cents = ?, company_income_cents = ?,
                   receipt_closed = ?, receipt_closed_at = ?, status = ?, updated_at = ?
             WHERE id = ?""",
-        (received, outstanding, 1 if closed else 0,
+        (received, outstanding, amounts["payable_amount_cents"],
+         amounts["company_income_cents"], 1 if closed else 0,
          now_text() if closed else None, status, now_text(), record_id),
     )
     return received, closed, outstanding, rec["status"]
@@ -685,15 +700,16 @@ def _recalc_receipt_state(db, record_id):
 @bp.route("/<int:record_id>/invoice", methods=("POST",))
 @perm_required("record.invoice")
 def invoice_set(record_id):
-    """登记开票。
+    """开票登记（收齐后由财务确认）。
 
-    分两级：先确认「是否需要开票」，需要开票的才继续跟踪「是否已经开票」；
-    选「不需要开票」时，已开票标记会被清掉，页面上也不再出现「是否已开票」。
+    登记时业务员已选「要 / 不要」：选「不要」的自动跳过这一步，不出现在财务待办里；
+    选「要」的收齐后轮转到财务，财务只需勾「已经开票」。
+    这里仍保留「不需要开票」选项，便于财务按实际情况纠正。
     """
     rec = get_record_or_404(record_id)
     back = redirect(url_for("records.detail", record_id=record_id))
-    if not (rec["received_amount_cents"] or rec["status"] == "completed"):
-        flash("收款到账后才能登记开票", "error")
+    if not (rec["receipt_closed"] or rec["status"] == "completed"):
+        flash("款项收齐后才能登记开票", "error")
         return back
 
     raw = (request.form.get("invoice_needed") or "").strip()
@@ -724,8 +740,9 @@ def receipt_add(record_id):
     """登记一笔收款。
 
     金额留空 = 本次还没收到，业务继续挂在待收款；
-    金额填 0 = 收款完毕（剩余不再追收），业务转「已收齐」；
-    金额 > 0 = 累加已收，累计收满自动转「已收齐」。
+    金额填 0 = 收款完毕（剩余不再追收），业务转「已收齐」——属特殊情况，
+                需要「收款不足特批结清」权限（主管）；
+    金额 > 0 = 累加已收，贸易费 + 留存利润都收满后自动转「已收齐」。
     """
     rec = get_record_or_404(record_id)
     if not can_receive_record(g.user, rec):
@@ -744,6 +761,9 @@ def receipt_add(record_id):
             flash("本次收款金额格式不正确", "error")
             return redirect(url_for("records.detail", record_id=record_id))
         is_close = amount_cents == 0
+        if is_close and not has_perm(g.user, "record.close_short"):
+            flash("未收齐就结清属于特殊情况，需要主管特批；请按实填写本次收款金额", "error")
+            return redirect(url_for("records.detail", record_id=record_id))
 
     received_date = parse_date(request.form.get("received_date")) or today()
     receipt_no = (request.form.get("receipt_no") or "").strip()
@@ -763,7 +783,8 @@ def receipt_add(record_id):
     if blank:
         detail_note = "本次未填金额：仍有款项待收，业务继续挂在待收款"
     elif is_close:
-        detail_note = f"收款完毕（填 0 结清），待收 {to_yuan_text(outstanding)} 元"
+        detail_note = (f"主管特批结清（填 0，剩余不再追收），"
+                       f"待收 {to_yuan_text(outstanding)} 元")
     else:
         detail_note = (f"收款 {to_yuan_text(amount_cents)} 元，回单号 {receipt_no or '—'}"
                        f"，累计已收 {to_yuan_text(received)} 元，待收 {to_yuan_text(outstanding)} 元")
@@ -777,8 +798,8 @@ def receipt_add(record_id):
     if blank:
         flash("已记录：仍有款项待收，业务继续挂在待收款", "ok")
     elif is_close:
-        flash("收款已结清" + (f"，待收 {to_yuan_text(outstanding)} 元（按填 0 结清）"
-                              if outstanding > 0 else ""), "ok")
+        flash("收款已按主管特批结清" + (f"，待收 {to_yuan_text(outstanding)} 元不再追收"
+                                        if outstanding > 0 else ""), "ok")
     elif closed:
         flash("本次收款已登记，累计收满，业务转为已收齐", "ok")
     else:

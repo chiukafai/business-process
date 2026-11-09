@@ -21,6 +21,7 @@ exports/
 # ---------- 截图与临时产物 ----------
 preview-*.png
 shots/
+*.log
 *.jpg
 *.png
 !static/**/*.png

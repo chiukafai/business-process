@@ -8,7 +8,12 @@
    资管确认每一轮收款后，系统再回头通知登记该业务的业务员。
 
 2. **开票登记 = 有 record.invoice 权限的人（财务部）**
-   「是否开票」不再在登记时填，改为收款到账后由财务登记。
+   「是否开票」在登记时由业务员选「要 / 不要」：
+   选「要」→ 贸易费与留存利润都收齐后轮转到财务确认开票；
+   选「不要」→ 自动跳过开票环节，不进财务待办。
+
+3. **未收齐结清 = 有 record.close_short 权限的人（主管特批）**
+   正常情况下贸易费与留存利润都收齐才进下一步；特殊情况允许主管特批结清。
 """
 from auth import has_perm
 
@@ -74,3 +79,21 @@ def receipt_staff(db):
 def can_invoice(user):
     """能否登记「是否开票」（财务部）。"""
     return bool(user) and has_perm(user, "record.invoice")
+
+
+def invoice_staff(db):
+    """有开票权限的人员列表（财务部），通知与待办用。"""
+    rows = db.execute(
+        """SELECT id, name, dept_id, role, permissions, wecom_userid, is_active
+             FROM users WHERE is_active = 1 ORDER BY id"""
+    ).fetchall()
+    return [
+        r for r in rows
+        if r["role"] != "admin" and has_perm(r, "record.invoice")
+    ]
+
+
+def can_close_short(user):
+    """未收齐就结清（特殊情况）是否允许：需要主管特批权限。"""
+    return bool(user) and has_perm(user, "record.close_short")
+

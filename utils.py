@@ -26,15 +26,17 @@ PREPAID_MODES = ["预存", "后付", "月结"]
 
 # 费用明细：不再选「费用类型」，改为每一项单独填列（金额，分）
 # (表单字段名, 中文名, 数据库列名)
+# 注：第一项原叫「服务费」，现统一叫「渠道提成」（对外付给渠道的提成）；
+#     金额核算里的「渠道提成」列已改名「留存利润」，两者不是同一件事。
 FEE_TYPES = [
-    ("fee_service",   "服务费",     "fee_service_cents"),
+    ("fee_service",   "渠道提成",   "fee_service_cents"),
     ("fee_overnight", "资金过夜费", "fee_overnight_cents"),
     ("fee_finance",   "财务费用",   "fee_finance_cents"),
     ("fee_other",     "其他费用",   "fee_other_cents"),
 ]
 
 # 旧「费用类型」文本里的历史叫法，统一到新名称
-FEE_ALIASES = {"通道费": "资金过夜费"}
+FEE_ALIASES = {"通道费": "资金过夜费", "服务费": "渠道提成"}
 
 ROLE_LABELS = {
     "staff": "业务员",
@@ -99,27 +101,36 @@ def to_rate(value):
     return float(d)
 
 
-def calc_amounts(biz_amount_cents, fee_rate, channel_commission_cents,
-                 payable_amount_cents, prepaid_amount_cents, received_amount_cents):
-    """统一金额口径。所有入参与返回均为整数分。
-
-    公司实收 = 业务金额 × 费率/100 − 渠道提成
-    辅助核算费用 = 业务金额 − 公司实收        ← 待确认口径，改这里一处即可
-    待收金额 = 应收 − 预存 − 已收（允许负数，表示多收/预收）
-    """
+def trade_fee_cents(biz_amount_cents, fee_rate):
+    """贸易费 = 业务金额 × 费率（分）。四舍五入到分。"""
     amt = Decimal(int(biz_amount_cents or 0))
     rate = Decimal(str(fee_rate or 0))
-    comm = Decimal(int(channel_commission_cents or 0))
+    return int((amt * rate / Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
-    income = (amt * rate / Decimal(100) - comm).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    aux = (amt - income).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    unpaid = (Decimal(int(payable_amount_cents or 0))
+
+def calc_amounts(biz_amount_cents, fee_rate, retention_cents,
+                 prepaid_amount_cents, received_amount_cents):
+    """统一金额口径。所有入参与返回均为整数分。
+
+    贸易费   = 业务金额 × 费率                  ← 向客户收取的费用，公式锁定
+    留存利润 = 贸易计划 K 列（利润1）合计        ← 与贸易费彼此独立，互不扣减
+    应收合计 = 贸易费 + 留存利润                 ← 两项都收齐才能进下一步
+    公司实收 = 累计已收（实际到账，由收款流水累计）
+    待收     = 应收合计 − 预存 − 已收（允许负数，表示多收/预收）
+    """
+    fee = trade_fee_cents(biz_amount_cents, fee_rate)
+    retention = int(retention_cents or 0)
+    received = int(received_amount_cents or 0)
+    receivable = fee + retention
+    unpaid = (Decimal(receivable)
               - Decimal(int(prepaid_amount_cents or 0))
-              - Decimal(int(received_amount_cents or 0))).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+              - Decimal(received)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
     return {
-        "company_income_cents": int(income),
-        "aux_fee_cents": int(aux),
+        # 列名沿用 payable_amount_cents，语义已是「贸易费」
+        "payable_amount_cents": int(fee),
+        # 公司实收 = 实际到账，与累计已收保持一致
+        "company_income_cents": received,
         "unpaid_amount_cents": int(unpaid),
     }
 
@@ -133,11 +144,14 @@ def _row_get(row, key, default=0):
 
 
 def receipt_progress(row):
-    """收款进度（分）。应收含预存抵扣，待收可为负数（多收）。
+    """收款进度（分）。应收合计 = 贸易费 + 留存利润，含预存抵扣，待收可为负数（多收）。
 
-    返回 dict：receivable / prepaid / received / outstanding / percent / closed
+    返回 dict：trade_fee / retention / receivable / prepaid / received /
+               outstanding / percent / closed
     """
-    receivable = int(_row_get(row, "payable_amount_cents"))
+    trade_fee = int(_row_get(row, "payable_amount_cents"))
+    retention = int(_row_get(row, "channel_commission_cents"))
+    receivable = trade_fee + retention
     prepaid = int(_row_get(row, "prepaid_amount_cents"))
     received = int(_row_get(row, "received_amount_cents"))
     closed = bool(int(_row_get(row, "receipt_closed")))
@@ -149,6 +163,8 @@ def receipt_progress(row):
     else:
         percent = int(max(0, min(100, round(covered * 100 / receivable))))
     return {
+        "trade_fee": trade_fee,
+        "retention": retention,
         "receivable": receivable,
         "prepaid": prepaid,
         "received": received,
@@ -254,19 +270,23 @@ def customer_label(row, fallback=""):
 # ---------- 开票 ----------
 
 def invoice_status(rec):
-    """开票两级状态：先确认「是否需要开票」，需要才跟踪「是否已开票」。
+    """开票两级状态：登记时选「要 / 不要」，收齐后由财务确认「已开票」。
 
     返回 {"label": 文案, "tone": ok|warn|muted}，模板直接渲染。
     """
-    keys = rec.keys() if hasattr(rec, "keys") else rec
-    needed = rec["invoice_needed"] if "invoice_needed" in keys else None
+    needed = _row_get(rec, "invoice_needed", None)
     if needed is None:
         return {"label": "待确认是否需要开票", "tone": "muted"}
-    if not needed:
-        return {"label": "不需要开票", "tone": "muted"}
-    if rec["is_invoiced"]:
+    if not int(needed):
+        return {"label": "不需要开票（已跳过开票环节）", "tone": "muted"}
+    if int(_row_get(rec, "is_invoiced")):
         return {"label": "已开票", "tone": "ok"}
     return {"label": "需要开票 · 待开票", "tone": "warn"}
+
+
+def needs_invoice(rec):
+    """这笔业务是否还需要走开票环节（历史 NULL 视为需要，避免漏开票）。"""
+    return int(_row_get(rec, "invoice_needed", 1) or 0) == 1
 
 
 # ---------- 日期 ----------

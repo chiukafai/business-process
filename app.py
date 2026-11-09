@@ -100,7 +100,7 @@ def create_app():
             else:
                 g.badge_cache = {"total": 0, "receipt": 0, "receipt_doing": 0,
                                  "receipt_label": "收款进行中", "collect": 0,
-                                 "revise": 0, "mine": 0}
+                                 "invoice": 0, "revise": 0, "mine": 0}
         return g.badge_cache
 
     @app.context_processor

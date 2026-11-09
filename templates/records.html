@@ -130,7 +130,7 @@
           <td class="num">{{ money(r.biz_amount_cents) }}</td>
           <td class="num">{{ money(r.company_income_cents) }}</td>
           <td class="num {% if r.unpaid_amount_cents < 0 %}neg{% endif %}"
-              title="应收 {{ money(r.payable_amount_cents) }} / 已收 {{ money(r.received_amount_cents) }}">
+              title="贸易费 {{ money(r.payable_amount_cents) }} + 留存利润 {{ money(r.channel_commission_cents) }} / 已收 {{ money(r.received_amount_cents) }}">
             {{ money(r.unpaid_amount_cents) }}
           </td>
           <td>{{ r.owner_name or '' }}</td>

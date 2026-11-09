@@ -95,10 +95,20 @@
           </div>
 
           <div class="field">
-            <label>是否开票</label>
-            <div style="height:36px;display:flex;align-items:center;font-size:12.5px;color:var(--muted-2)">
-              收款到账后由财务登记
+            <label>是否开票<span class="req">*</span></label>
+            <div style="display:flex;gap:18px;align-items:center;height:36px">
+              <label class="check">
+                <input type="radio" name="invoice_needed" value="1"
+                       {% if form.get('invoice_needed')|string == '1' %}checked{% endif %}>
+                要
+              </label>
+              <label class="check">
+                <input type="radio" name="invoice_needed" value="0"
+                       {% if form.get('invoice_needed')|string == '0' %}checked{% endif %}>
+                不要
+              </label>
             </div>
+            <span class="hint">选「要」：贸易费与留存利润都收齐后转财务确认开票；选「不要」：自动跳过开票环节</span>
           </div>
         </div>
       </div>
@@ -123,17 +133,17 @@
                    class="num-input" value="{{ form.get('fee_rate') or '' }}" placeholder="1.5">
           </div>
           <div class="field">
-            <label>渠道提成（元）</label>
+            <label>留存利润（元）</label>
             <input type="number" step="0.01" min="0" name="channel_commission" id="channel_commission"
                    class="num-input" value="{{ form.get('channel_commission') or '' }}" placeholder="0.00">
+            <span class="hint">导入贸易计划时取 K 列（利润1）合计，可手工修正</span>
           </div>
 
           <div class="field">
-            <label>应收金额（元）</label>
-            <input type="number" step="0.01" min="0" name="payable_amount" id="payable_amount"
-                   class="num-input" value="{{ form.get('payable_amount') or '' }}"
-                   {% if not is_new %}data-locked="1"{% endif %} placeholder="默认等于辅助核算费用">
-            <span class="hint">向客户收取的金额，可手工调整</span>
+            <label>贸易费（元）</label>
+            <input type="text" class="num-input" id="trade_fee" readonly
+                   value="{{ to_yuan_text(rec.payable_amount_cents) if rec else '0.00' }}">
+            <span class="hint">业务金额 × 费率，自动计算并锁定</span>
           </div>
           <div class="field">
             <label>预存金额（元）</label>
@@ -153,7 +163,7 @@
         <div class="sub-block">
           <div class="sub-head">
             <span class="sub-title">费用明细</span>
-            <span class="sub-hint">可留空，收到款项后由财务在详情页登记；暂不参与金额计算（公式待定）</span>
+            <span class="sub-hint">可留空，收到款项后由财务在详情页登记；不参与贸易费 / 待收的计算</span>
           </div>
           <div class="form-grid four">
             {% for field, label, col in FEE_TYPES %}
@@ -218,12 +228,16 @@
     <div class="calc-panel">
       <div style="font-size:12.5px;color:var(--muted);font-weight:600;margin-bottom:6px">实时试算</div>
       <div class="calc-row">
-        <span class="k">公司实收</span>
-        <span class="v" id="calcIncome">0.00 元</span>
+        <span class="k">贸易费</span>
+        <span class="v" id="calcTradeFee">0.00 元</span>
       </div>
       <div class="calc-row">
-        <span class="k">辅助核算费用</span>
-        <span class="v" id="calcAux">0.00 元</span>
+        <span class="k">留存利润</span>
+        <span class="v" id="calcRetention">0.00 元</span>
+      </div>
+      <div class="calc-row">
+        <span class="k">应收合计</span>
+        <span class="v" id="calcReceivable">0.00 元</span>
       </div>
       <div class="calc-row">
         <span class="k">费用合计（四项）</span>
@@ -234,10 +248,11 @@
         <span class="v" id="calcUnpaid">0.00 元</span>
       </div>
       <div style="font-size:11.5px;color:var(--muted-2);margin-top:10px;line-height:1.7">
-        公司实收 = 业务金额 × 费率 − 渠道提成<br>
-        待收 = 应收 − 预存 − 已收<br>
-        费用合计 = 服务费 + 资金过夜费 + 财务费用 + 其他费用（仅登记）<br>
-        <span style="color:var(--warn)">辅助核算费用口径待确认，当前按「业务金额 − 公司实收」计算</span>
+        贸易费 = 业务金额 × 费率（锁定）<br>
+        应收合计 = 贸易费 + 留存利润<br>
+        待收 = 应收合计 − 预存 − 已收<br>
+        费用合计 = 渠道提成 + 资金过夜费 + 财务费用 + 其他费用（仅登记）<br>
+        <span style="color:var(--warn)">贸易费与留存利润两项都收齐，才转入开票 / 费用环节</span>
       </div>
     </div>
   </div>
