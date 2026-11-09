@@ -469,6 +469,67 @@ r = client.post("/records/new", data={k: v for k, v in FORM.items()
                 follow_redirects=True)
 check("没选「要/不要」时保存被拦", "请选择是否需要开票" in r.get_data(as_text=True))
 
+print("\n=== 13. 贸易费可手工修正（四舍五入差异）===")
+FEE_FORM = dict(FORM, customer_name="贸易费手改客户", biz_amount="100000", fee_rate="1.2",
+                channel_commission="100", payable_amount="1200.26")
+client.post("/records/new", data=FEE_FORM, follow_redirects=True)
+with application.app_context():
+    rid3 = get_db().execute("SELECT MAX(id) m FROM records").fetchone()["m"]
+row = rec(rid3)
+check("贸易费按手填值 1200.26（公式是 1200）", row["payable_amount_cents"] == 120026,
+      str(row["payable_amount_cents"]))
+check("应收合计 = 1200.26 + 100 = 1300.26",
+      row["payable_amount_cents"] + row["channel_commission_cents"] == 130026,
+      str(row["payable_amount_cents"] + row["channel_commission_cents"]))
+check("待收跟着手填值算 1300.26", row["unpaid_amount_cents"] == 130026,
+      str(row["unpaid_amount_cents"]))
+
+detail3 = body(f"/records/{rid3}")
+check("详情页标注「手工修正」", "手工修正" in detail3)
+check("详情页给出公式值 1,200.00", "1,200.00" in detail3)
+
+edit_html = body(f"/records/{rid3}/edit")
+check("编辑页把 1200.26 回填到贸易费框", 'value="1200.26"' in edit_html)
+fee_tag = edit_html.split('id="trade_fee"')[1].split(">")[0] if 'id="trade_fee"' in edit_html else ""
+check("贸易费框已不是只读", 'id="trade_fee"' in edit_html and "readonly" not in fee_tag, fee_tag.strip())
+check("贸易费框旁有「按公式」按钮", 'id="tradeFeeReset"' in edit_html)
+
+# 留空 → 回落到公式值
+client.post(f"/records/{rid3}/edit",
+            data={k: v for k, v in FEE_FORM.items() if k != "payable_amount"},
+            follow_redirects=True)
+row = rec(rid3)
+check("留空贸易费则按公式 = 1200 元", row["payable_amount_cents"] == 120000,
+      str(row["payable_amount_cents"]))
+check("留空后待收回到 1300 元", row["unpaid_amount_cents"] == 130000,
+      str(row["unpaid_amount_cents"]))
+
+# 再手改一次并提交，然后走收款：重算待收不能把手工值冲掉
+client.post(f"/records/{rid3}/edit", data=dict(FEE_FORM, action="submit"), follow_redirects=True)
+check("提交后进入待收款", rec(rid3)["status"] == "pending_payment", rec(rid3)["status"])
+client.post(f"/records/{rid3}/receipts",
+            data={"received_amount": "1000", "received_date": "2026-11-07"}, follow_redirects=True)
+row = rec(rid3)
+check("收款重算后贸易费仍是手填的 1200.26", row["payable_amount_cents"] == 120026,
+      str(row["payable_amount_cents"]))
+check("待收 = 1300.26 − 1000 = 300.26", row["unpaid_amount_cents"] == 30026,
+      str(row["unpaid_amount_cents"]))
+
+# 手续费补齐 → 自动结清
+client.post(f"/records/{rid3}/receipts",
+            data={"received_amount": "300.26", "received_date": "2026-11-08"}, follow_redirects=True)
+row = rec(rid3)
+check("补齐 300.26 后自动结清", row["receipt_closed"] == 1 and row["status"] == "completed",
+      f"{row['receipt_closed']}/{row['status']}")
+
+# 校验：负数 / 非数字
+r = client.post("/records/new", data=dict(FORM, customer_name="贸易费负数",
+                                          payable_amount="-1"), follow_redirects=True)
+check("贸易费填负数被拦", "贸易费不能为负数" in r.get_data(as_text=True))
+r = client.post("/records/new", data=dict(FORM, customer_name="贸易费乱码",
+                                          payable_amount="abc"), follow_redirects=True)
+check("贸易费填非数字被拦", "贸易费格式不正确" in r.get_data(as_text=True))
+
 print("\n" + "=" * 50)
 print(f"通过 {passed} 项，失败 {failed} 项")
 sys.exit(0 if failed == 0 else 1)

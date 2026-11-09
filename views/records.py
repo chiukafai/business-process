@@ -14,7 +14,8 @@ from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES,
                    calc_amounts, clean_company_name, customer_label,
                    fee_total_cents, month_bounds, month_value, needs_invoice,
                    now_text, parse_date, parse_month, receipt_progress,
-                   status_label, to_cents, to_rate, to_yuan_text, today)
+                   status_label, to_cents, to_rate, to_yuan_text, today,
+                   trade_fee_cents)
 
 bp = Blueprint("records", __name__, url_prefix="/records")
 
@@ -178,7 +179,19 @@ def _read_form(form, db=None, rec=None):
         errors.append("留存利润格式不正确")
         retention_cents = 0
 
-    # 贸易费按公式算，表单里不再接收手填值（列名沿用 payable_amount_cents）
+    # 贸易费：默认 = 业务金额 × 费率，留空即按公式；填了就以填的为准（四舍五入差异可手改）
+    raw_trade_fee = (form.get("payable_amount") or "").strip()
+    if raw_trade_fee == "":
+        override_trade_fee = None
+    else:
+        override_trade_fee = to_cents(raw_trade_fee)
+        if override_trade_fee is None:
+            errors.append("贸易费格式不正确")
+            override_trade_fee = None
+        elif override_trade_fee < 0:
+            errors.append("贸易费不能为负数")
+            override_trade_fee = None
+
     prepaid_amount_cents = to_cents(form.get("prepaid_amount"))
     if prepaid_amount_cents is None:
         errors.append("预存金额格式不正确")
@@ -225,6 +238,7 @@ def _read_form(form, db=None, rec=None):
     amounts = calc_amounts(
         biz_amount_cents, fee_rate, retention_cents,
         prepaid_amount_cents, received_amount_cents,
+        override_trade_fee=override_trade_fee,
     )
 
     data = {
@@ -507,11 +521,16 @@ def detail(record_id):
     import ocr
     suggestions = ocr.parse_fields(rec["receipt_ocr_text"] or "") if rec["receipt_ocr_text"] else {}
 
+    # 贸易费是否被手工修正过：给出公式值，方便核对（四舍五入差异用）
+    fee_formula = trade_fee_cents(rec["biz_amount_cents"], rec["fee_rate"])
+    fee_gap = int(rec["payable_amount_cents"] or 0) - fee_formula
+
     return render_template(
         "record_detail.html", rec=rec, logs=logs, actions=actions,
         receipts=receipts, progress=receipt_progress(rec),
         suggestions=suggestions, ocr_status=ocr.status(),
         dept_options=_dept_options(me),
+        fee_formula=fee_formula, fee_gap=fee_gap,
     )
 
 
@@ -675,6 +694,8 @@ def _recalc_receipt_state(db, record_id):
     amounts = calc_amounts(
         rec["biz_amount_cents"], rec["fee_rate"], rec["channel_commission_cents"],
         rec["prepaid_amount_cents"], received,
+        # 贸易费可能被手工修正过，重算待收时不能拿公式值覆盖它
+        override_trade_fee=rec["payable_amount_cents"],
     )
     outstanding = amounts["unpaid_amount_cents"]
     # 收满了也自动结清，避免金额已齐却还挂在「待收款」

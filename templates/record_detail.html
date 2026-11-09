@@ -102,7 +102,15 @@
   <div class="kv-grid">
     <div class="kv money"><div class="k">业务金额</div><div class="v">{{ money(rec.biz_amount_cents) }}</div></div>
     <div class="kv"><div class="k">费率</div><div class="v">{{ rec.fee_rate }}%</div></div>
-    <div class="kv money"><div class="k">贸易费</div><div class="v">{{ money(rec.payable_amount_cents) }}</div></div>
+    <div class="kv money"><div class="k">贸易费</div>
+      <div class="v">{{ money(rec.payable_amount_cents) }}
+        {% if fee_gap %}
+        <span style="font-size:11px;color:#b45309;font-weight:400;display:block">
+          手工修正（公式值 {{ money(fee_formula) }}，{{ '+' if fee_gap > 0 else '' }}{{ money(fee_gap) }}）
+        </span>
+        {% endif %}
+      </div>
+    </div>
     <div class="kv money"><div class="k">留存利润</div><div class="v">{{ money(rec.channel_commission_cents) }}</div></div>
     <div class="kv money"><div class="k">公司实收</div><div class="v">{{ money(rec.company_income_cents) }}</div></div>
     <div class="kv money"><div class="k">预存金额</div><div class="v">{{ money(rec.prepaid_amount_cents) }}</div></div>

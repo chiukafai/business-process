@@ -109,16 +109,20 @@ def trade_fee_cents(biz_amount_cents, fee_rate):
 
 
 def calc_amounts(biz_amount_cents, fee_rate, retention_cents,
-                 prepaid_amount_cents, received_amount_cents):
+                 prepaid_amount_cents, received_amount_cents,
+                 override_trade_fee=None):
     """统一金额口径。所有入参与返回均为整数分。
 
-    贸易费   = 业务金额 × 费率                  ← 向客户收取的费用，公式锁定
+    贸易费   = 业务金额 × 费率（四舍五入到分）
+               override_trade_fee 非 None 时以手填值为准 —— 用于四舍五入差异、
+               或与客户谈定的实际费用不一致时的人工修正
     留存利润 = 贸易计划 K 列（利润1）合计        ← 与贸易费彼此独立，互不扣减
     应收合计 = 贸易费 + 留存利润                 ← 两项都收齐才能进下一步
     公司实收 = 累计已收（实际到账，由收款流水累计）
     待收     = 应收合计 − 预存 − 已收（允许负数，表示多收/预收）
     """
-    fee = trade_fee_cents(biz_amount_cents, fee_rate)
+    formula = trade_fee_cents(biz_amount_cents, fee_rate)
+    fee = formula if override_trade_fee is None else int(override_trade_fee)
     retention = int(retention_cents or 0)
     received = int(received_amount_cents or 0)
     receivable = fee + retention

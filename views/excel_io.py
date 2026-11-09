@@ -16,7 +16,7 @@ from db import get_db
 from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES, calc_amounts,
                    clean_company_name, customer_label, money, month_bounds, month_label,
                    month_value, now_text, parse_date, parse_month, to_cents, to_rate,
-                   today)
+                   today, trade_fee_cents)
 
 bp = Blueprint("excel", __name__, url_prefix="/excel")
 
@@ -326,7 +326,8 @@ def import_page():
 
         # 留存利润：贸易计划的 K 列（利润1）逐行利润，加总即为合计项
         retention = to_cents(cell("channel_commission")) or 0
-        # 表里若带「贸易费 / 应收金额」列，只用来核对，最终金额一律按公式重算
+        # 表里若带「贸易费 / 应收金额」列，以表里的值为准（可能是四舍五入后的实际数）；
+        # 没这一列或单元格空着，才按公式算
         raw_payable = cell("payable_amount")
         payable = to_cents(raw_payable) or 0
         prepaid = to_cents(cell("prepaid_amount")) or 0
@@ -459,14 +460,17 @@ def import_page():
                           f"{money(sheet_retention)} 不一致，已按明细加总",
             })
 
-        amounts = calc_amounts(total_amount, fee_rate, retention, prepaid, received)
+        amounts = calc_amounts(total_amount, fee_rate, retention, prepaid, received,
+                               override_trade_fee=file_payable)
         payable = amounts["payable_amount_cents"]
-        # 表里若带「贸易费 / 应收金额」列，与公式不一致时提示（金额一律按公式）
-        if file_payable is not None and abs(file_payable - payable) > 1:
+        # 表里给了「贸易费 / 应收金额」就以表里的为准（可能是四舍五入后的实际数）；
+        # 只有和公式差得多时才提示，方便回头核对
+        formula_payable = trade_fee_cents(total_amount, fee_rate)
+        if file_payable is not None and abs(file_payable - formula_payable) > 1:
             warned.append({
                 "row": bucket["row"], "customer": customer_name,
                 "reason": f"Excel 里的贸易费 {money(file_payable)} 与公式"
-                          f"（业务金额 × 费率 = {money(payable)}）不一致，已按公式取值",
+                          f"（业务金额 × 费率 = {money(formula_payable)}）不一致，已按 Excel 取值",
             })
 
         upstream = "、".join(_uniq([i["upstream_company"] for i in items

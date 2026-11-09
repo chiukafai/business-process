@@ -12,7 +12,7 @@ for _f in ("app.db", "app.db-wal", "app.db-shm", "secret.key"):
 
 import app as app_module  # noqa: E402
 from db import get_db  # noqa: E402
-from utils import calc_amounts, now_text  # noqa: E402
+from utils import calc_amounts, now_text, trade_fee_cents  # noqa: E402
 from werkzeug.security import generate_password_hash  # noqa: E402
 
 application = app_module.create_app()
@@ -85,12 +85,13 @@ with application.app_context():
             comm_c = int(comm * 100)
             prepaid_c = int(prepaid_amt * 100)
             paid_c = int(paid_amt * 100)
-            payable = calc_amounts(amt_c, rate, comm_c, 0, 0, 0)["aux_fee_cents"]
-            amounts = calc_amounts(amt_c, rate, comm_c, payable, prepaid_c, paid_c)
-            # 已完成的单按「应收 − 预存」全额收款，待收归零
+            # 金额口径：贸易费 = 业务金额 × 费率；应收合计 = 贸易费 + 留存利润
+            payable = trade_fee_cents(amt_c, rate)
+            receivable = payable + comm_c
+            # 已完成的单按「应收合计 − 预存」全额收款，待收归零
             if status == "completed":
-                paid_c = payable - prepaid_c
-                amounts = calc_amounts(amt_c, rate, comm_c, payable, prepaid_c, paid_c)
+                paid_c = max(0, receivable - prepaid_c)
+            amounts = calc_amounts(amt_c, rate, comm_c, prepaid_c, paid_c)
             oid = user_id[owner]
             oname = db.execute("SELECT name FROM users WHERE id=?", (oid,)).fetchone()["name"]
             cur = db.execute(
@@ -104,8 +105,8 @@ with application.app_context():
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (status, oid, oname, dept_id[dept], btype, prepaid_mode, bdate,
                  1 if status == "completed" else 0, cust, int(amt_c * 0.001),
-                 amt_c, rate, comm_c, amounts["company_income_cents"],
-                 amounts["aux_fee_cents"], payable, prepaid_c, paid_c,
+                 amt_c, rate, comm_c,                  amounts["company_income_cents"],
+                 0, payable, prepaid_c, paid_c,
                  1 if status == "completed" else 0,
                  amounts["unpaid_amount_cents"],
                  bdate if status == "completed" else None,

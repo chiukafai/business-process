@@ -88,8 +88,17 @@
       const prepaid = num('prepaid_amount');
       const paid = num('received_amount');   // 已收金额（只读，由收款登记累计）
 
-      // 贸易费 = 业务金额 × 费率（锁定）；应收合计 = 贸易费 + 留存利润
-      const tradeFee = Math.round(amt * rate / 100 * 100) / 100;
+      // 贸易费默认 = 业务金额 × 费率；手工改过就尊重手工值（四舍五入差异）
+      const feeEl = $('trade_fee');
+      const formulaFee = Math.round(amt * rate / 100 * 100) / 100;
+      let tradeFee = formulaFee;
+      if (feeManual && feeEl) {
+        const typed = parseFloat(String(feeEl.value || '').replace(/[,，¥￥元\s]/g, ''));
+        tradeFee = isFinite(typed) ? Math.round(typed * 100) / 100 : 0;
+      } else if (feeEl) {
+        // 没手工改过：跟着公式走（新单自动填出，改金额/费率时同步刷新）
+        feeEl.value = formulaFee.toFixed(2);
+      }
       const receivable = Math.round((tradeFee + retention) * 100) / 100;
       const unpaid = Math.round((receivable - prepaid - paid) * 100) / 100;
 
@@ -114,10 +123,39 @@
       set('calcUnpaid', fmt(unpaid), unpaid < 0);
       set('calcUnpaidTop', fmt(unpaid), unpaid < 0);
 
-      // 贸易费只读展示，跟公式联动
-      const feeEl = $('trade_fee');
-      if (feeEl) feeEl.value = tradeFee.toFixed(2);
+      // 手改过就说明差多少，避免改了金额忘了回头看贸易费
+      const hint = $('tradeFeeHint');
+      if (hint) {
+        const gap = Math.round((tradeFee - formulaFee) * 100) / 100;
+        if (feeManual && Math.abs(gap) >= 0.005) {
+          hint.textContent = '已手工修正：公式值 ' + fmt(formulaFee) +
+            ' 元，当前差 ' + (gap > 0 ? '+' : '') + fmt(gap) + ' 元';
+          hint.classList.add('warn');
+        } else {
+          hint.textContent = '业务金额 × 费率，自动算出；可手工改（如四舍五入取整）';
+          hint.classList.remove('warn');
+        }
+      }
     };
+
+    // false = 跟公式；true = 用输入框里的手工值
+    let feeManual = false;
+    const feeInput = $('trade_fee');
+    if (feeInput) {
+      // 编辑旧单：库里存的贸易费与公式不一致，说明当时是手工定的，保持不动
+      const stored = parseFloat(String(feeInput.value || '').replace(/[,，¥￥元\s]/g, ''));
+      const formulaNow = Math.round(num('biz_amount') * num('fee_rate') / 100 * 100) / 100;
+      if (isFinite(stored) && Math.abs(stored - formulaNow) >= 0.005) feeManual = true;
+      feeInput.addEventListener('input', function () { feeManual = true; render(); });
+    }
+    const resetBtn = document.getElementById('tradeFeeReset');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', function () {
+        feeManual = false;
+        render();
+        if (feeInput) feeInput.focus();
+      });
+    }
 
     ['biz_amount', 'fee_rate', 'channel_commission', 'prepaid_amount'].forEach(function (id) {
       const el = $(id);

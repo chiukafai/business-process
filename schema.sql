@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS records (
   channel_commission_cents INTEGER NOT NULL DEFAULT 0, -- 12 留存利润（贸易计划 K 列合计，原「渠道提成」）
   company_income_cents INTEGER NOT NULL DEFAULT 0, -- 13 公司实收（= 累计已收，实际到账）
   aux_fee_cents        INTEGER NOT NULL DEFAULT 0, -- 14 辅助核算费用（已停用，仅保留历史值）
-  payable_amount_cents INTEGER NOT NULL DEFAULT 0, -- 15 贸易费（= 业务金额 × 费率，公式锁定）
+  payable_amount_cents INTEGER NOT NULL DEFAULT 0, -- 15 贸易费（默认 = 业务金额 × 费率，允许手工修正四舍五入差异）
   prepaid_amount_cents INTEGER NOT NULL DEFAULT 0, -- 16 预存金额
   paid_amount_cents    INTEGER NOT NULL DEFAULT 0, -- 17 付款金额（历史列，现由 received_amount_cents 取代）
   unpaid_amount_cents  INTEGER NOT NULL DEFAULT 0, -- 18 待收金额（自动算：贸易费 + 留存利润 − 预存 − 已收）

@@ -220,6 +220,51 @@ def main():
     wb = load_workbook(io.BytesIO(r.data))
     check("空白模板表头一致", [c.value for c in wb.active[1]] == TEMPLATE_HEADERS)
 
+    print("\n=== 6. 表里给了贸易费就以表里的为准 ===")
+    wb2 = Workbook()
+    ws2 = wb2.active
+    ws2.append(TEMPLATE_HEADERS)
+    ws2.append([{"归属部门": "集团总部", "类型": "代采", "预存与否": "后付",
+                 "月份": "2026/12/01", "是否开票": "否", "主体公司": "手改贸易费客户",
+                 "业务金额": 500000, "费率": 1.5, "留存利润": 1000,
+                 "贸易费": 7500.26}.get(h) for h in TEMPLATE_HEADERS])
+    buf2 = io.BytesIO()
+    wb2.save(buf2)
+    buf2.seek(0)
+    r6 = client.post("/excel/import", data={"file": (buf2, "贸易费_测试.xlsx")},
+                     content_type="multipart/form-data", follow_redirects=True)
+    body6 = r6.get_data(as_text=True)
+    with application.app_context():
+        got = get_db().execute(
+            "SELECT * FROM records WHERE customer_name = '手改贸易费客户'").fetchone()
+    check("贸易费按表内 7500.26 取值（公式是 7500）",
+          got is not None and got["payable_amount_cents"] == 750026,
+          str(got["payable_amount_cents"]) if got else "未导入")
+    check("待收 = 7500.26 + 留存利润 1000 = 8500.26",
+          got is not None and got["unpaid_amount_cents"] == 850026,
+          str(got["unpaid_amount_cents"]) if got else "-")
+    check("差异超过 1 分时提示「已按 Excel 取值」", "已按 Excel 取值" in body6)
+
+    # 表里没有贸易费列的值（留空）仍按公式
+    wb3 = Workbook()
+    ws3 = wb3.active
+    ws3.append(TEMPLATE_HEADERS)
+    ws3.append([{"归属部门": "集团总部", "类型": "代采", "预存与否": "后付",
+                 "月份": "2026/12/01", "是否开票": "否", "主体公司": "公式贸易费客户",
+                 "业务金额": 500000, "费率": 1.5, "留存利润": 1000}.get(h)
+                for h in TEMPLATE_HEADERS])
+    buf3 = io.BytesIO()
+    wb3.save(buf3)
+    buf3.seek(0)
+    client.post("/excel/import", data={"file": (buf3, "贸易费_空列.xlsx")},
+                content_type="multipart/form-data", follow_redirects=True)
+    with application.app_context():
+        got2 = get_db().execute(
+            "SELECT * FROM records WHERE customer_name = '公式贸易费客户'").fetchone()
+    check("贸易费留空仍按公式 7500 元",
+          got2 is not None and got2["payable_amount_cents"] == 750000,
+          str(got2["payable_amount_cents"]) if got2 else "未导入")
+
 
 if __name__ == "__main__":
     main()
