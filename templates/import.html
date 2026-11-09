@@ -82,7 +82,7 @@
   </div>
   <div class="table-wrap">
     <table class="tbl">
-      <thead><tr><th style="width:90px">Excel 行号</th><th>客户名称</th><th>原因</th></tr></thead>
+      <thead><tr><th style="width:90px">Excel 行号</th><th>主体公司</th><th>原因</th></tr></thead>
       <tbody>
         {% for b in result.bad %}
         <tr>
@@ -99,7 +99,7 @@
   {% if result.skipped_rows %}
   <div class="card-head" style="border-top:1px solid var(--border)">
     <div class="card-title">已跳过的行</div>
-    <span style="font-size:11.5px;color:var(--muted-2)">合计行、汇总公式行或客户名称为空的行</span>
+    <span style="font-size:11.5px;color:var(--muted-2)">合计行、汇总公式行或主体公司为空的行</span>
   </div>
   <div class="table-wrap">
     <table class="tbl">
@@ -122,7 +122,7 @@
   </div>
   <div class="table-wrap">
     <table class="tbl">
-      <thead><tr><th style="width:90px">Excel 行号</th><th>客户名称</th><th>差异说明</th></tr></thead>
+      <thead><tr><th style="width:90px">Excel 行号</th><th>主体公司</th><th>差异说明</th></tr></thead>
       <tbody>
         {% for w in result.warned %}
         <tr>
@@ -165,7 +165,7 @@
 
       <div style="margin-top:18px;font-size:12.5px;color:var(--muted);line-height:1.9">
         <strong style="color:var(--text)">导入规则</strong><br>
-        1. 表头需有「客户名称」或「主体公司」，以及「业务金额」或「金额」，其余列按名称自动识别，列序不限<br>
+        1. 表头需有「主体公司」或「客户名称」，以及「业务金额」或「金额」，其余列按名称自动识别，列序不限<br>
         2. <b>业务金额按「主体公司」汇总</b>：同一主体公司 + 归属部门 + 月份的多行明细合并成一条业务，不再逐行生成<br>
         3. 「上游公司」列（贸易计划模板 C 列）带入业务登记，多个上游去重后合并；「下游公司」列不导入<br>
         4. 名称先清理再入库：自动去掉末尾的括号备注与多余符号，「粤丰果业（无票）」→「粤丰果业」，
@@ -175,7 +175,7 @@
         7. 含合计 / 汇总 / 小计公式的行会自动跳过，不会当成业务导入<br>
         8. 表格没有「归属部门」列时，记录归入上方所选的默认部门；表里有该列则以表格为准<br>
         9. 导入的记录一律为「草稿」，核对无误后提交即进入「待收款」，由业务员跟进收取客户款项<br>
-        10. 客户名称若在客户档案里不存在，会自动建档
+        10. 主体公司若在客户档案里不存在，会自动建档（同时写入客户名称与主体公司）
       </div>
     </div>
     <div class="form-actions">

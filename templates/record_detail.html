@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ rec.customer_name }}{% endblock %}
+{% block title %}{{ rec.customer_label or rec.customer_name }}{% endblock %}
 {% block page_title %}业务详情 #{{ rec.id }}{% endblock %}
 
 {% block topbar_actions %}
@@ -12,7 +12,7 @@
   <div class="card-body">
     <div class="detail-head">
       <div>
-        <div class="detail-title">{{ rec.customer_name }}</div>
+        <div class="detail-title">{{ rec.customer_label or rec.customer_name }}</div>
         <div class="detail-sub">
           <span class="tag tag-{{ rec.status }}">{{ status_label(rec.status) }}</span>
           <span style="margin-left:8px">{{ rec.dept_name or '' }}</span>

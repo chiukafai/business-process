@@ -21,7 +21,7 @@
   <form class="filters" method="get">
     <div class="field grow">
       <label>关键字</label>
-      <input type="text" name="kw" value="{{ request.args.get('kw', '') }}" placeholder="客户名称 / 说明 / 业务单号">
+      <input type="text" name="kw" value="{{ request.args.get('kw', '') }}" placeholder="主体公司 / 说明 / 业务单号">
     </div>
     <div class="field">
       <label>动作</label>
@@ -57,7 +57,7 @@
     <table class="tbl">
       <thead>
         <tr>
-          <th>时间</th><th>业务单号</th><th>客户名称</th><th class="num">业务金额</th>
+          <th>时间</th><th>业务单号</th><th>主体公司</th><th class="num">业务金额</th>
           <th>动作</th><th>状态变化</th><th>操作人</th><th>说明</th>
         </tr>
       </thead>
@@ -70,7 +70,7 @@
             <a href="{{ url_for('records.detail', record_id=r.record_id) }}">#{{ r.record_id }}</a>
             {% else %}—{% endif %}
           </td>
-          <td class="cust">{{ r.customer_name or '—' }}</td>
+          <td class="cust">{{ r.customer_label or r.customer_name or '—' }}</td>
           <td class="num">{% if r.biz_amount_cents is not none %}{{ money(r.biz_amount_cents) }}{% else %}—{% endif %}</td>
           <td><span class="pill">{{ action_labels.get(r.action, r.action) }}</span></td>
           <td style="font-size:12px;color:var(--muted);white-space:nowrap">

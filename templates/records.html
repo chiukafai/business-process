@@ -18,7 +18,7 @@
   <form class="filters" method="get">
     <div class="field grow">
       <label>关键字</label>
-      <input type="text" name="kw" value="{{ kw }}" placeholder="客户名称 / 回单编号 / 备注">
+      <input type="text" name="kw" value="{{ kw }}" placeholder="主体公司 / 回单编号 / 备注">
     </div>
     <div class="field">
       <label>部门</label>
@@ -102,7 +102,7 @@
       <thead>
         <tr>
           <th class="ck-cell"><input type="checkbox" class="js-check-all" title="全选本页"></th>
-          <th>序号</th><th>状态</th><th>客户名称</th><th>上游公司</th><th>部门</th><th>类型</th>
+          <th>序号</th><th>状态</th><th>主体公司</th><th>上游公司</th><th>部门</th><th>类型</th>
           <th>月份</th><th class="num">业务金额</th><th class="num">公司实收</th>
           <th class="num">待收</th><th>登记人</th><th>更新时间</th>
           <th style="width:70px">操作</th>
@@ -119,7 +119,7 @@
           </td>
           <td style="color:var(--muted)">{{ r.id }}</td>
           <td><span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span></td>
-          <td class="cust">{{ r.customer_name }}</td>
+          <td class="cust">{{ r.customer_label or r.customer_name }}</td>
           <td style="color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
               title="{{ r.upstream_company or '' }}">{{ r.upstream_company or '—' }}</td>
           <td>{{ r.dept_name or '' }}</td>
@@ -136,7 +136,7 @@
           <td>
             {% if del_ok %}
             <form method="post" action="{{ url_for('records.delete', record_id=r.id) }}"
-                  data-confirm="删除后不可恢复，流程日志与回单附件会一并清除。确认删除 #{{ r.id }} {{ r.customer_name }}？">
+                  data-confirm="删除后不可恢复，流程日志与回单附件会一并清除。确认删除 #{{ r.id }} {{ r.customer_label or r.customer_name }}？">
               <button class="btn btn-sm btn-danger" type="submit">删除</button>
             </form>
             {% else %}
@@ -163,7 +163,7 @@
       <a class="rec-card" href="{{ url_for('records.detail', record_id=r.id) }}">
         <div class="rc-top">
           <span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span>
-          <span class="rc-cust">{{ r.customer_name }}</span>
+          <span class="rc-cust">{{ r.customer_label or r.customer_name }}</span>
           <span style="color:var(--muted-2);font-size:11.5px">#{{ r.id }}</span>
         </div>
         <div class="rc-mid">
@@ -177,7 +177,7 @@
       </a>
       {% if del_ok %}
       <form method="post" action="{{ url_for('records.delete', record_id=r.id) }}"
-            data-confirm="删除后不可恢复，流程日志与回单附件会一并清除。确认删除 #{{ r.id }} {{ r.customer_name }}？"
+            data-confirm="删除后不可恢复，流程日志与回单附件会一并清除。确认删除 #{{ r.id }} {{ r.customer_label or r.customer_name }}？"
             style="text-align:right;margin-top:6px">
         <button class="btn btn-sm btn-danger" type="submit">删除</button>
       </form>

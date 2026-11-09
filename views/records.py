@@ -9,10 +9,11 @@ from auth import (can_delete_record, can_receive_record, can_register_fee,
                   visible_scope)
 from db import get_db
 from notifier import notify_next
-from utils import (FEE_TYPES, calc_amounts, clean_company_name, fee_total_cents,
-                   month_bounds, month_value, now_text, parse_date, parse_month,
-                   receipt_progress, status_label, to_cents, to_rate,
-                   to_yuan_text, today)
+from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES,
+                   calc_amounts, clean_company_name, customer_label,
+                   fee_total_cents, month_bounds, month_value, now_text,
+                   parse_date, parse_month, receipt_progress, status_label,
+                   to_cents, to_rate, to_yuan_text, today)
 
 bp = Blueprint("records", __name__, url_prefix="/records")
 
@@ -43,8 +44,9 @@ def _scope_clause(user):
 
 def get_record_or_404(record_id):
     rec = get_db().execute(
-        """SELECT r.*, d.name AS dept_name
+        f"""SELECT r.*, d.name AS dept_name, {CUSTOMER_LABEL_SQL}
              FROM records r LEFT JOIN departments d ON d.id = r.dept_id
+             LEFT JOIN customers cu ON cu.id = r.customer_id
             WHERE r.id = ?""",
         (record_id,),
     ).fetchone()
@@ -58,6 +60,9 @@ def get_record_or_404(record_id):
 def _form_values(rec):
     """把数据库行转成表单回填字典（金额由分转元）。"""
     d = dict(rec)
+    # 表单里的「主体公司」按档案口径回填，避免历史快照存的是旧名字
+    if "customer_label" in rec.keys() and rec["customer_label"]:
+        d["customer_name"] = rec["customer_label"]
     yuan_fields = ["biz_amount_cents", "channel_commission_cents",
                    "payable_amount_cents", "prepaid_amount_cents",
                    "received_amount_cents"]
@@ -121,21 +126,27 @@ def _read_form(form, db=None, rec=None):
     if db is not None:
         if customer_id:
             row = db.execute(
-                "SELECT id, name FROM customers WHERE id = ?", (customer_id,)
+                "SELECT id, name, short_name FROM customers WHERE id = ?", (customer_id,)
             ).fetchone()
             if row:
-                customer_name = row["name"]
+                # 业务口径存「主体公司」：档案主体公司优先，没填回退客户名称
+                customer_name = customer_label(row, customer_name)
             else:
                 errors.append("所选客户不存在，请重新选择")
                 customer_id = None
         elif customer_name:
+            # 输入的名字可能是主体公司，也可能是客户名称，两种都认
             row = db.execute(
-                "SELECT id FROM customers WHERE name = ?", (customer_name,)
+                "SELECT id, name, short_name FROM customers "
+                "WHERE TRIM(COALESCE(short_name,'')) = ? OR name = ? "
+                "ORDER BY CASE WHEN TRIM(COALESCE(short_name,'')) = ? THEN 0 ELSE 1 END",
+                (customer_name, customer_name, customer_name),
             ).fetchone()
             if row:
                 customer_id = row["id"]
+                customer_name = customer_label(row, customer_name)
             elif has_perm(g.user, "record.create"):
-                # 首次出现的客户名自动建档，避免业务员被客户模块卡住
+                # 首次出现的名字自动建档，避免业务员被客户模块卡住
                 cur = db.execute(
                     "INSERT INTO customers (name, created_by, created_at, updated_at) "
                     "VALUES (?,?,?,?)",
@@ -144,7 +155,7 @@ def _read_form(form, db=None, rec=None):
                 customer_id = cur.lastrowid
 
     if not customer_name:
-        errors.append("客户名称必填")
+        errors.append("主体公司必填")
 
     biz_amount_cents = to_cents(form.get("biz_amount"))
     if biz_amount_cents is None:
@@ -248,8 +259,12 @@ def _guard_dept(user, dept_id):
 
 
 def _customer_options():
+    """登记表单的客户下拉：按「主体公司」排序，前端展示主体公司，全称作备注。"""
     return get_db().execute(
-        "SELECT id, name, short_name FROM customers WHERE is_active = 1 ORDER BY name"
+        "SELECT id, name, short_name, "
+        "       COALESCE(NULLIF(TRIM(short_name), ''), name) AS entity_name "
+        "  FROM customers WHERE is_active = 1 "
+        " ORDER BY entity_name COLLATE NOCASE"
     ).fetchall()
 
 
@@ -284,21 +299,25 @@ def index():
         clauses.append("r.biz_date <= ?")
         params.append(m_to)
     if kw:
+        # 主体公司按「档案主体公司 → 档案客户名称 → 历史快照」三档匹配
         clauses.append(
-            "(r.customer_name LIKE ? OR r.upstream_company LIKE ? OR r.receipt_no LIKE ? "
+            f"({CUSTOMER_SEARCH_SQL} OR r.upstream_company LIKE ? OR r.receipt_no LIKE ? "
             "OR r.remark LIKE ? OR r.biz_type LIKE ?)"
         )
         params.extend([f"%{kw}%"] * 5)
 
     where_sql = " AND ".join(clauses)
+    from_sql = ("FROM records r "
+                "LEFT JOIN departments d ON d.id = r.dept_id "
+                "LEFT JOIN customers cu ON cu.id = r.customer_id")
 
-    total = db.execute(f"SELECT COUNT(*) c FROM records r WHERE {where_sql}", params).fetchone()["c"]
+    total = db.execute(f"SELECT COUNT(*) c {from_sql} WHERE {where_sql}", params).fetchone()["c"]
     pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     page = min(page, pages)
 
     rows = db.execute(
-        f"""SELECT r.*, d.name AS dept_name
-              FROM records r LEFT JOIN departments d ON d.id = r.dept_id
+        f"""SELECT r.*, d.name AS dept_name, {CUSTOMER_LABEL_SQL}
+             {from_sql}
              WHERE {where_sql}
              ORDER BY r.updated_at DESC, r.id DESC
              LIMIT ? OFFSET ?""",
@@ -311,7 +330,7 @@ def index():
                    COALESCE(SUM(r.biz_amount_cents),0)      biz,
                    COALESCE(SUM(r.company_income_cents),0)  income,
                    COALESCE(SUM(r.unpaid_amount_cents),0)   unpaid
-              FROM records r WHERE {where_sql}""",
+              {from_sql} WHERE {where_sql}""",
         params,
     ).fetchone()
 

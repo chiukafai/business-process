@@ -24,7 +24,7 @@
     <table class="tbl">
       <thead>
         <tr>
-          <th>状态</th><th>客户名称</th><th>归属部门</th><th>登记人</th>
+          <th>状态</th><th>主体公司</th><th>归属部门</th><th>登记人</th>
           <th class="num">业务金额</th><th class="num">应收</th><th class="num">待收</th>
           <th>等待</th><th style="width:150px">操作</th>
         </tr>
@@ -33,7 +33,7 @@
         {% for r in rows %}
         <tr class="{% if r.updated_at | stale %}stale-row{% endif %}">
           <td><span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span></td>
-          <td class="cust"><a href="{{ url_for('records.detail', record_id=r.id) }}">{{ r.customer_name }}</a></td>
+          <td class="cust"><a href="{{ url_for('records.detail', record_id=r.id) }}">{{ r.customer_label or r.customer_name }}</a></td>
           <td>{{ r.dept_name or '' }}</td>
           <td>{{ r.owner_display or r.owner_name or '' }}</td>
           <td class="num">{{ money(r.biz_amount_cents) }}</td>
@@ -60,7 +60,7 @@
     <a class="rec-card" {% if r.updated_at | stale %}style="background:#fffbeb"{% endif %} href="{{ url_for('records.detail', record_id=r.id) }}">
       <div class="rc-top">
         <span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span>
-        <span class="rc-cust">{{ r.customer_name }}</span>
+        <span class="rc-cust">{{ r.customer_label or r.customer_name }}</span>
       </div>
       <div class="rc-mid">
         <div><label>业务金额</label><b>{{ money(r.biz_amount_cents) }}</b></div>

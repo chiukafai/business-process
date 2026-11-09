@@ -13,17 +13,19 @@ from openpyxl.utils import get_column_letter
 
 from auth import has_perm, login_required, perm_required, visible_scope
 from db import get_db
-from utils import (FEE_TYPES, calc_amounts, clean_company_name, money, month_bounds,
-                   month_label, month_value, now_text, parse_date, parse_month,
-                   to_cents, to_rate, today)
+from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES, calc_amounts,
+                   clean_company_name, customer_label, money, month_bounds, month_label,
+                   month_value, now_text, parse_date, parse_month, to_cents, to_rate,
+                   today)
 
 bp = Blueprint("excel", __name__, url_prefix="/excel")
 
 # 导出模板列序（在原始 26 列基础上：客户名称后插「上游公司」，
 # 「费用类型」拆成四项费用明细，均可被导入端按表头名反向识别）
+# 第 9 列对外统一叫「主体公司」（导入端同时认「客户名称」等旧写法）
 TEMPLATE_HEADERS = [
     "序号", "归属部门", "类型", "预存与否", "月份", "报送计划时间", "计划出具日期",
-    "是否开票", "客户名称", "上游公司",
+    "是否开票", "主体公司", "上游公司",
     "服务费", "资金过夜费", "财务费用", "其他费用",
     "业务金额", "费率", "渠道提成", "公司实收",
     "辅助【核算费用，有公式】", "应收金额", "预存金额", "已收金额", "待收金额",
@@ -213,7 +215,7 @@ def import_page():
             col_map = candidate
             break
     if header_row_idx is None:
-        flash("未识别到表头：文件里需要有「客户名称」或「主体公司」列，"
+        flash("未识别到表头：文件里需要有「主体公司」或「客户名称」列，"
               "以及「业务金额」或「金额」列，表头须在第 15 行以内", "error")
         return redirect(url_for("excel.import_page"))
 
@@ -260,7 +262,7 @@ def import_page():
 
         raw_customer = cell("customer_name")
         if isinstance(raw_customer, (int, float)):
-            skipped_rows.append({"row": offset, "reason": "客户名称是数字，判定为表尾备注行"})
+            skipped_rows.append({"row": offset, "reason": "主体公司是数字，判定为表尾备注行"})
             continue
 
         raw_name_text = str(raw_customer or "").strip()
@@ -269,7 +271,7 @@ def import_page():
             renamed[raw_name_text] = customer_name
         if (_looks_like_summary(row[:3], raw_customer)
                 or customer_name in ("", "合计", "小计", "总计")):
-            skipped_rows.append({"row": offset, "reason": "合计行或客户名称为空"})
+            skipped_rows.append({"row": offset, "reason": "合计行或主体公司为空"})
             continue
         if len(customer_name) > 120:
             customer_name = customer_name[:120]
@@ -463,23 +465,26 @@ def import_page():
             "upstream": upstream,
         })
 
-    # 客户名 → 客户档案（导入时自动建档，避免客户模块卡住批量导入）
+    # 主体公司 → 客户档案（导入时自动建档，避免客户模块卡住批量导入）
+    # 匹配顺序：客户档案「主体公司」优先，再退到「客户名称」，
+    # 因为业务模块对外一律用主体公司，档案的主体公司没填时才用全称。
     if ok_rows:
         for item in ok_rows:
             name = item["customer_name"]
-            row = db.execute("SELECT id FROM customers WHERE name = ?", (name,)).fetchone()
-            if not row:
-                # 档案里若把这个名字填在「主体公司」列，也认，避免重复建档
-                row = db.execute(
-                    "SELECT id FROM customers WHERE short_name = ?", (name,)
-                ).fetchone()
+            row = db.execute(
+                "SELECT id, name, short_name FROM customers "
+                "WHERE TRIM(COALESCE(short_name,'')) = ? OR name = ? "
+                "ORDER BY CASE WHEN TRIM(COALESCE(short_name,'')) = ? THEN 0 ELSE 1 END",
+                (name, name, name),
+            ).fetchone()
             if row:
                 item["customer_id"] = row["id"]
+                item["customer_name"] = customer_label(row, name)
             else:
                 cur = db.execute(
-                    "INSERT INTO customers (name, created_by, created_at, updated_at) "
-                    "VALUES (?,?,?,?)",
-                    (name, g.user["name"], now_text(), now_text()),
+                    "INSERT INTO customers (name, short_name, created_by, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?)",
+                    (name, name, g.user["name"], now_text(), now_text()),
                 )
                 item["customer_id"] = cur.lastrowid
 
@@ -553,8 +558,10 @@ def _filtered_rows():
     else:
         clause, params = "r.owner_id = ?", [g.user["id"]]
 
-    sql = f"""SELECT r.*, d.name AS dept_name
-                FROM records r LEFT JOIN departments d ON d.id = r.dept_id
+    sql = f"""SELECT r.*, d.name AS dept_name, {CUSTOMER_LABEL_SQL}
+                FROM records r
+                LEFT JOIN departments d ON d.id = r.dept_id
+                LEFT JOIN customers cu ON cu.id = r.customer_id
                WHERE {clause}"""
     status = request.args.getlist("status")
     if status:
@@ -574,7 +581,7 @@ def _filtered_rows():
         params.append(m_to)
     kw = (request.args.get("kw") or "").strip()
     if kw:
-        sql += (" AND (r.customer_name LIKE ? OR r.upstream_company LIKE ?"
+        sql += (f" AND ({CUSTOMER_SEARCH_SQL} OR r.upstream_company LIKE ?"
                 " OR r.receipt_no LIKE ? OR r.remark LIKE ?)")
         params.extend([f"%{kw}%"] * 4)
     sql += " ORDER BY r.id"
@@ -618,7 +625,7 @@ def export():
             r["id"], r["dept_name"] or "", r["biz_type"] or "", r["prepaid_mode"] or "",
             month_value(r["biz_date"]), r["report_plan_date"] or "",
             r["issue_plan_date"] or "",
-            "是" if r["is_invoiced"] else "否", r["customer_name"],
+            "是" if r["is_invoiced"] else "否", r["customer_label"] or r["customer_name"],
             r["upstream_company"] or "",
             r["fee_service_cents"] / 100, r["fee_overnight_cents"] / 100,
             r["fee_finance_cents"] / 100, r["fee_other_cents"] / 100,

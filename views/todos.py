@@ -7,6 +7,7 @@ from flask import Blueprint, g, render_template, request
 
 from auth import has_perm, login_required, visible_scope
 from db import get_db
+from utils import CUSTOMER_LABEL_SQL
 
 bp = Blueprint("todos", __name__, url_prefix="/todos")
 
@@ -36,11 +37,12 @@ def build_todos(user):
     if not user:
         return result
 
-    base = """SELECT r.*, d.name AS dept_name, u.name AS owner_display
+    base = f"""SELECT r.*, d.name AS dept_name, u.name AS owner_display, {CUSTOMER_LABEL_SQL}
                 FROM records r
                 LEFT JOIN departments d ON d.id = r.dept_id
                 LEFT JOIN users u ON u.id = r.owner_id
-               WHERE {cond}
+                LEFT JOIN customers cu ON cu.id = r.customer_id
+               WHERE {{cond}}
                ORDER BY r.submitted_at ASC, r.updated_at ASC
                LIMIT 200"""
 

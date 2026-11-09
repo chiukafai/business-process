@@ -24,18 +24,18 @@
           </div>
 
           <div class="field">
-            <label>客户名称<span class="req">*</span></label>
+            <label>主体公司<span class="req">*</span></label>
             <input type="text" name="customer_name" id="customerName" required maxlength="120"
                    list="customerList" autocomplete="off"
                    value="{{ form.get('customer_name') or '' }}"
-                   placeholder="选择已有客户，或直接输入新客户全称">
+                   placeholder="选已有主体公司，或直接输入新的主体公司">
             <datalist id="customerList">
               {% for c in customers %}
-              <option value="{{ c.name }}">{{ c.short_name or '' }}</option>
+              <option value="{{ c.entity_name }}" label="{{ c.name }}">{{ c.name }}</option>
               {% endfor %}
             </datalist>
             <input type="hidden" name="customer_id" id="customerId" value="{{ form.get('customer_id') or '' }}">
-            <span class="hint">输入新名称会自动建立客户档案；末尾括号备注会自动清理</span>
+            <span class="hint">取客户档案里的「主体公司」，没填则用客户名称；新名字会自动建档，末尾括号备注会自动清理</span>
           </div>
 
           <div class="field">

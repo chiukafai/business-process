@@ -9,7 +9,8 @@ import db as db_module
 import notifier
 from auth import has_perm, login_required, perm_required
 from db import get_db
-from utils import ROLE_LABELS, now_text, status_label
+from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, ROLE_LABELS,
+                   now_text, status_label)
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -367,7 +368,7 @@ def _log_filters(args):
         params.append(args.get("to") + " 23:59:59")
     kw = (args.get("kw") or "").strip()
     if kw:
-        clauses.append("(r.customer_name LIKE ? OR l.note LIKE ? OR CAST(r.id AS TEXT) = ?)")
+        clauses.append(f"({CUSTOMER_SEARCH_SQL} OR l.note LIKE ? OR CAST(r.id AS TEXT) = ?)")
         params.extend([f"%{kw}%", f"%{kw}%", kw])
     return " AND ".join(clauses), params
 
@@ -382,15 +383,20 @@ def logs():
     where, params = _log_filters(request.args)
 
     total = db.execute(
-        f"SELECT COUNT(*) c FROM record_logs l LEFT JOIN records r ON r.id = l.record_id WHERE {where}",
+        f"""SELECT COUNT(*) c FROM record_logs l
+              LEFT JOIN records r ON r.id = l.record_id
+              LEFT JOIN customers cu ON cu.id = r.customer_id
+             WHERE {where}""",
         params,
     ).fetchone()["c"]
     pages = max(1, (total + size - 1) // size)
     page = min(page, pages)
 
     rows = db.execute(
-        f"""SELECT l.*, r.customer_name, r.biz_amount_cents
-              FROM record_logs l LEFT JOIN records r ON r.id = l.record_id
+        f"""SELECT l.*, {CUSTOMER_LABEL_SQL}, r.biz_amount_cents
+              FROM record_logs l
+              LEFT JOIN records r ON r.id = l.record_id
+              LEFT JOIN customers cu ON cu.id = r.customer_id
              WHERE {where}
              ORDER BY l.id DESC LIMIT ? OFFSET ?""",
         params + [size, (page - 1) * size],
@@ -414,10 +420,12 @@ def logs_export():
     db = get_db()
     where, params = _log_filters(request.args)
     rows = db.execute(
-        f"""SELECT l.id, l.created_at, r.id AS rid, r.customer_name,
+        f"""SELECT l.id, l.created_at, r.id AS rid, {CUSTOMER_LABEL_SQL},
                    r.biz_amount_cents, l.action, l.from_status, l.to_status,
                    l.actor_name, l.note
-              FROM record_logs l LEFT JOIN records r ON r.id = l.record_id
+              FROM record_logs l
+              LEFT JOIN records r ON r.id = l.record_id
+              LEFT JOIN customers cu ON cu.id = r.customer_id
              WHERE {where}
              ORDER BY l.id DESC""",
         params,
@@ -426,7 +434,7 @@ def logs_export():
     wb = Workbook()
     ws = wb.active
     ws.title = "操作日志"
-    headers = ["日志ID", "时间", "业务单号", "客户名称", "业务金额", "动作",
+    headers = ["日志ID", "时间", "业务单号", "主体公司", "业务金额", "动作",
                "原状态", "新状态", "操作人", "说明"]
     ws.append(headers)
     for c in ws[1]:
@@ -436,7 +444,7 @@ def logs_export():
 
     for r in rows:
         ws.append([
-            r["id"], r["created_at"], r["rid"], r["customer_name"],
+            r["id"], r["created_at"], r["rid"], r["customer_label"],
             (r["biz_amount_cents"] or 0) / 100,
             LOG_ACTION_LABELS.get(r["action"], r["action"]),
             status_label(r["from_status"]), status_label(r["to_status"]),

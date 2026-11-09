@@ -218,6 +218,38 @@ def clean_company_name(value):
     return name
 
 
+# ---------- 客户主体公司口径 ----------
+# 业务模块对外一律叫「主体公司」，取值优先级：
+#   客户档案的「主体公司」→ 客户档案的「客户名称」→ 业务里的历史快照
+# SQL 片段：使用处必须 LEFT JOIN customers cu ON cu.id = r.customer_id
+CUSTOMER_LABEL_SQL = (
+    "COALESCE(NULLIF(TRIM(cu.short_name), ''), cu.name, r.customer_name) AS customer_label"
+)
+
+# 关键词搜索时也要走到主体公司，否则历史快照存的是全称就搜不到
+CUSTOMER_SEARCH_SQL = (
+    "COALESCE(NULLIF(TRIM(cu.short_name), ''), cu.name, r.customer_name) LIKE ?"
+)
+
+
+def customer_label(row, fallback=""):
+    """Python 侧取主体公司：档案主体公司 → 档案客户名称 → 兜底值。"""
+    if row is not None:
+        try:
+            short = (row["short_name"] or "").strip()
+        except (KeyError, IndexError):
+            short = ""
+        if short:
+            return short
+        try:
+            name = (row["name"] or "").strip()
+        except (KeyError, IndexError):
+            name = ""
+        if name:
+            return name
+    return (fallback or "").strip()
+
+
 # ---------- 日期 ----------
 def parse_date(value):
     """把各种输入统一成 'YYYY-MM-DD'，无法解析返回 None。"""
