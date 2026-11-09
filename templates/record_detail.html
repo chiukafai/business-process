@@ -38,13 +38,15 @@
 </div>
 {% endif %}
 
+{% set st = stage_of(rec) %}
 <div class="card">
   <div class="card-body">
     <div class="detail-head">
       <div>
         <div class="detail-title">{{ rec.customer_label or rec.customer_name }}</div>
         <div class="detail-sub">
-          <span class="tag tag-{{ rec.status }}">{{ status_label(rec.status) }}</span>
+          <span class="tag" title="{{ st.hint }}"
+                style="background:{{ st.bg }};color:{{ st.color }};border-color:{{ st.bd }}">{{ st.label }}</span>
           <span style="margin-left:8px">
             {% if rec.dept_name %}{{ rec.dept_name }}{% else %}<b style="color:#c2410c">部门待确认</b>{% endif %}
           </span>
@@ -88,6 +90,20 @@
         </form>
         {% endif %}
       </div>
+    </div>
+
+    <!-- 流程进度：报批 → 收款 → 收齐 → 开票，每一步都能看出走到哪、下一步归谁 -->
+    <div class="stage-steps">
+      {% for s in stage_steps(rec) %}
+      <div class="stage-step {{ s.state }}">
+        <span class="ss-dot">{% if s.state == 'done' %}✓{% elif s.state == 'skip' %}–{% else %}{{ loop.index }}{% endif %}</span>
+        <span class="ss-body">
+          <span class="ss-label">{{ s.label }}</span>
+          <span class="ss-note">{{ s.note }}</span>
+        </span>
+        {% if not loop.last %}<span class="ss-line"></span>{% endif %}
+      </div>
+      {% endfor %}
     </div>
   </div>
 

@@ -5,7 +5,7 @@ from flask import Blueprint, g, render_template
 
 from auth import has_perm, login_required, visible_scope
 from db import get_db
-from utils import STATUS_META, STATUS_ORDER
+from utils import STAGE_META, STAGE_ORDER, STAGE_SQL
 from views.todos import build_todos, todo_counts
 
 bp = Blueprint("dashboard", __name__)
@@ -45,17 +45,19 @@ def index():
         params + [month],
     ).fetchone()
 
+    # 按「阶段」统计：已收齐再分待开票 / 已开票 / 无需开票，比四态更说得清
+    stage_case = "CASE " + " ".join(
+        f"WHEN {STAGE_SQL[s]} THEN '{s}'" for s in STAGE_ORDER
+    ) + " END"
     dist_rows = db.execute(
-        f"SELECT r.status, COUNT(*) c FROM records r WHERE {clause} GROUP BY r.status",
+        f"SELECT {stage_case} AS stage, COUNT(*) c FROM records r "
+        f"WHERE {clause} GROUP BY stage",
         params,
     ).fetchall()
-    dist = {s: 0 for s in STATUS_ORDER}
+    dist = {s: 0 for s in STAGE_ORDER}
     for row in dist_rows:
-        # 历史遗留状态并入待收款
-        key = row["status"]
-        if key in ("in_progress", "pending_approval"):
-            key = "pending_payment"
-        dist[key] = dist.get(key, 0) + row["c"]
+        if row["stage"] in dist:
+            dist[row["stage"]] += row["c"]
     dist_total = sum(dist.values()) or 1
 
     counts = todo_counts(g.user)

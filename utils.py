@@ -50,6 +50,119 @@ def status_label(code):
     return STATUS_META.get(code, {}).get("label", code or "")
 
 
+# ---------- 流程阶段（展示口径） ----------
+# 数据库 status 只有四态：draft / pending_payment / completed / rejected。
+# 但「已收齐」之后还有开票环节：收齐待开票、已开票、无需开票，三者的 status 都是
+# completed，只看 status 会全部显示成「已收齐」，看不出流程走到哪一步。
+# 所以展示层再派生一层更细的「阶段」，页面标签、待办、导出一律用它。
+STAGE_META = {
+    "draft":           {"label": "报批中",         "color": "#0369a1", "bg": "#e0f2fe", "bd": "#bae6fd",
+                        "hint": "已登记，等待提交进入收款"},
+    "pending_payment": {"label": "待收款",         "color": "#6d28d9", "bg": "#ede9fe", "bd": "#ddd6fe",
+                        "hint": "已提交，等待资管确认客户款项到账"},
+    "collecting":      {"label": "收款中",         "color": "#b45309", "bg": "#fef3c7", "bd": "#fde68a",
+                        "hint": "已收到部分款项，还未收齐"},
+    "invoice_pending": {"label": "待开票",         "color": "#c2410c", "bg": "#ffedd5", "bd": "#fed7aa",
+                        "hint": "款项已收齐，等待财务开票"},
+    "invoiced":        {"label": "已开票",         "color": "#15803d", "bg": "#dcfce7", "bd": "#bbf7d0",
+                        "hint": "款项收齐、发票已开出，流程结束"},
+    "paid_no_invoice": {"label": "已收齐·无需开票", "color": "#0f766e", "bg": "#ccfbf1", "bd": "#99f6e4",
+                        "hint": "款项收齐，登记时选了不需要开票，流程结束"},
+    "rejected":        {"label": "已驳回",         "color": "#b91c1c", "bg": "#fee2e2", "bd": "#fecaca",
+                        "hint": "被退回，修改后可重新提交"},
+}
+
+STAGE_ORDER = ["draft", "pending_payment", "collecting", "invoice_pending",
+               "invoiced", "paid_no_invoice", "rejected"]
+
+# 阶段 → SQL 条件。列表筛选、导出、仪表盘统计共用同一份，必须与 stage_of() 一一对应，
+# 否则会出现「筛选出来的条数和标签对不上」。
+STAGE_SQL = {
+    "draft": "r.status = 'draft'",
+    "pending_payment": ("r.status IN ('pending_payment','pending_approval') "
+                        "AND COALESCE(r.received_amount_cents,0) "
+                        "+ COALESCE(r.prepaid_amount_cents,0) = 0"),
+    "collecting": ("r.status IN ('pending_payment','pending_approval') "
+                   "AND COALESCE(r.received_amount_cents,0) "
+                   "+ COALESCE(r.prepaid_amount_cents,0) > 0"),
+    "invoice_pending": ("r.status = 'completed' AND COALESCE(r.invoice_needed,1) = 1 "
+                        "AND COALESCE(r.is_invoiced,0) = 0"),
+    "invoiced": "r.status = 'completed' AND COALESCE(r.is_invoiced,0) = 1",
+    "paid_no_invoice": "r.status = 'completed' AND r.invoice_needed = 0",
+    "rejected": "r.status = 'rejected'",
+}
+
+STAGE_FILTERS = STAGE_ORDER
+
+
+def stage_of(rec):
+    """把 status + 开票字段合成为一个展示阶段，返回 STAGE_META 副本 + code。"""
+    status = _row_get(rec, "status", "") or ""
+    if status in ("in_progress", "pending_approval"):
+        status = "pending_payment"
+
+    if status == "rejected":
+        code = "rejected"
+    elif status == "draft":
+        code = "draft"
+    elif status == "completed":
+        needed = _row_get(rec, "invoice_needed", None)
+        if needed is not None and not int(needed):
+            # 登记时就选了「不要」，开票环节跳过
+            code = "paid_no_invoice"
+        elif int(_row_get(rec, "is_invoiced", 0) or 0):
+            code = "invoiced"
+        else:
+            code = "invoice_pending"
+    else:
+        covered = (int(_row_get(rec, "received_amount_cents", 0) or 0)
+                   + int(_row_get(rec, "prepaid_amount_cents", 0) or 0))
+        code = "collecting" if covered > 0 else "pending_payment"
+
+    meta = dict(STAGE_META[code])
+    meta["code"] = code
+    meta["status"] = status
+    return meta
+
+
+def stage_steps(rec):
+    """详情页流程进度条：报批 → 收款 → 收齐 → 开票。
+
+    返回 [{"key","label","note","state"}]，state ∈ done / current / todo / skip / reject。
+    """
+    code = stage_of(rec)["code"]
+    steps = [
+        {"key": "apply",   "label": "报批", "note": "登记 / 导入"},
+        {"key": "collect", "label": "收款", "note": "资管确认到账"},
+        {"key": "close",   "label": "收齐", "note": "应收三项收满"},
+        {"key": "invoice", "label": "开票", "note": "财务确认开票"},
+    ]
+    idx = {"draft": 0, "rejected": 0, "pending_payment": 1, "collecting": 1,
+           "invoice_pending": 3, "invoiced": 4, "paid_no_invoice": 4}.get(code, 0)
+    for i, st in enumerate(steps):
+        if i < idx:
+            st["state"] = "done"
+        elif i == idx:
+            st["state"] = "current"
+        else:
+            st["state"] = "todo"
+
+    if code == "rejected":
+        steps[0]["state"] = "reject"
+        steps[0]["note"] = "被退回，待修改"
+    elif code == "collecting":
+        steps[1]["note"] = "已收部分，继续追收"
+    elif code == "paid_no_invoice":
+        steps[3]["state"] = "skip"
+        steps[3]["note"] = "无需开票"
+    elif code == "invoice_pending":
+        steps[2]["state"] = "done"
+        steps[3]["state"] = "current"
+    elif code == "invoiced":
+        steps[3]["note"] = "已开出"
+    return steps
+
+
 # ---------- 金额 ----------
 
 def to_cents(value):

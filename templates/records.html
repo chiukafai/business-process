@@ -43,19 +43,20 @@
 
   <div class="filters" style="border-bottom:1px solid var(--border)">
     <form method="get" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%">
-      {% for k, vals in request.args.lists() if k not in ['status','page'] %}{% for v in vals %}
+      {% for k, vals in request.args.lists() if k not in ['status','stage','page'] %}{% for v in vals %}
         <input type="hidden" name="{{ k }}" value="{{ v }}">
       {% endfor %}{% endfor %}
       <div class="chips">
-        {% for s in STATUS_ORDER %}
-        <label class="chip {% if s in f_status %}on{% endif %}">
-          <input type="checkbox" name="status" value="{{ s }}" {% if s in f_status %}checked{% endif %}>
-          {{ STATUS_META[s].label }}
+        {% for s in STAGE_ORDER %}
+        <label class="chip {% if s in f_stage %}on{% endif %}" title="{{ STAGE_META[s].hint }}">
+          <input type="checkbox" name="stage" value="{{ s }}" {% if s in f_stage %}checked{% endif %}>
+          <i class="chip-dot" style="background:{{ STAGE_META[s].color }}"></i>
+          {{ STAGE_META[s].label }}
         </label>
         {% endfor %}
       </div>
-      <button class="btn btn-sm" type="submit">按状态筛选</button>
-      {% if f_status %}<a class="btn btn-sm btn-ghost" href="{{ url_for('records.index') }}">清除状态</a>{% endif %}
+      <button class="btn btn-sm" type="submit">按阶段筛选</button>
+      {% if f_stage %}<a class="btn btn-sm btn-ghost" href="{{ url_for('records.index') }}">清除阶段</a>{% endif %}
       <div style="margin-left:auto;display:flex;gap:8px">
         {% if can('record.export') %}
         <a class="btn btn-sm"
@@ -102,7 +103,7 @@
       <thead>
         <tr>
           <th class="ck-cell"><input type="checkbox" class="js-check-all" title="全选本页"></th>
-          <th>序号</th><th>状态</th><th>主体公司</th><th>上游公司</th><th>部门</th><th>类型</th>
+          <th>序号</th><th>阶段</th><th>主体公司</th><th>上游公司</th><th>部门</th><th>类型</th>
           <th>月份</th><th class="num">业务金额</th><th class="num">公司实收</th>
           <th class="num">待收</th><th>登记人</th><th>更新时间</th>
           <th style="width:70px">操作</th>
@@ -111,6 +112,7 @@
       <tbody>
         {% for r in rows %}
         {% set del_ok = can_delete_record(current_user, r) %}
+        {% set st = stage_of(r) %}
         {% set can_submit_row = r.owner_id == current_user.id and r.status in ('draft','rejected') and r.dept_id %}
         <tr class="clickable" data-href="{{ url_for('records.detail', record_id=r.id) }}">
           <td class="ck-cell">
@@ -118,7 +120,8 @@
                    {% if not del_ok and not can_submit_row %}disabled title="这条业务你没有可批量操作的权限"{% endif %}>
           </td>
           <td style="color:var(--muted)">{{ r.id }}</td>
-          <td><span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span></td>
+          <td><span class="tag" title="{{ st.hint }}"
+                    style="background:{{ st.bg }};color:{{ st.color }};border-color:{{ st.bd }}">{{ st.label }}</span></td>
           <td class="cust">{{ r.customer_label or r.customer_name }}</td>
           <td style="color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
               title="{{ r.upstream_company or '' }}">{{ r.upstream_company or '—' }}</td>
@@ -156,6 +159,7 @@
   <div class="rec-cards" style="padding:12px">
     {% for r in rows %}
     {% set del_ok = can_delete_record(current_user, r) %}
+    {% set st = stage_of(r) %}
     {% set can_submit_row = r.owner_id == current_user.id and r.status in ('draft','rejected') and r.dept_id %}
     <div class="rec-card-item">
       <div class="rc-select">
@@ -164,7 +168,8 @@
       </div>
       <a class="rec-card" href="{{ url_for('records.detail', record_id=r.id) }}">
         <div class="rc-top">
-          <span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span>
+          <span class="tag" title="{{ st.hint }}"
+                style="background:{{ st.bg }};color:{{ st.color }};border-color:{{ st.bd }}">{{ st.label }}</span>
           <span class="rc-cust">{{ r.customer_label or r.customer_name }}</span>
           <span style="color:var(--muted-2);font-size:11.5px">#{{ r.id }}</span>
         </div>

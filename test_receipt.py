@@ -595,6 +595,85 @@ check("流水分项：渠道提成 10（留痕，不进应收）", last["channel
 check("累计已收 1250 + 10 = 1260 元（留痕项也计入实收合计）",
       row["received_amount_cents"] == 126000, str(row["received_amount_cents"]))
 
+# ---------- 9. 阶段标签：已收齐之后还要分清「待开票 / 已开票」 ----------
+print("\n=== 9. 阶段标签（报批 → 待收款 → 收款中 → 待开票 → 已开票） ===")
+import re
+
+STAGE_WORDS = ("报批中", "待收款", "收款中", "待开票", "已开票", "已收齐·无需开票", "已驳回")
+STAGE_RE = ">\\s*(%s)\\s*<" % "|".join(STAGE_WORDS)
+
+
+def stage_tag(path):
+    """从详情页头部 detail-sub 里取阶段标签文案（不是从整页里碰运气）。"""
+    html = body(path)
+    i = html.find("detail-sub")
+    seg = html[i:i + 700] if i >= 0 else ""
+    m = re.search(STAGE_RE, seg)
+    return m.group(1) if m else ""
+
+
+def new_record(customer, invoice_needed):
+    client.post("/records/new", data=dict(FORM, customer_name=customer,
+                                          invoice_needed=invoice_needed),
+                follow_redirects=True)
+    with application.app_context():
+        return get_db().execute("SELECT MAX(id) m FROM records").fetchone()["m"]
+
+
+rid9 = new_record("阶段标签客户", "1")
+check("新登记显示「报批中」", stage_tag(f"/records/{rid9}") == "报批中", stage_tag(f"/records/{rid9}"))
+
+client.post(f"/records/{rid9}/submit", follow_redirects=True)
+check("提交后显示「待收款」", stage_tag(f"/records/{rid9}") == "待收款", stage_tag(f"/records/{rid9}"))
+
+client.post(f"/records/{rid9}/receipts",
+            data={"trade_fee": "600", "received_date": "2026-11-09"}, follow_redirects=True)
+check("收到部分款显示「收款中」", stage_tag(f"/records/{rid9}") == "收款中", stage_tag(f"/records/{rid9}"))
+
+client.post(f"/records/{rid9}/receipts",
+            data={"trade_fee": "600", "received_date": "2026-11-09"}, follow_redirects=True)
+check("收满要开票的单显示「待开票」而非「已收齐」",
+      stage_tag(f"/records/{rid9}") == "待开票", stage_tag(f"/records/{rid9}"))
+check("收齐但未开票，数据库 status 仍是 completed",
+      rec(rid9)["status"] == "completed" and rec(rid9)["is_invoiced"] == 0,
+      f"{rec(rid9)['status']}/{rec(rid9)['is_invoiced']}")
+
+client.post(f"/records/{rid9}/invoice",
+            data={"invoice_needed": "1", "is_invoiced": "1"}, follow_redirects=True)
+check("开票后显示「已开票」", stage_tag(f"/records/{rid9}") == "已开票",
+      stage_tag(f"/records/{rid9}"))
+check("开票不改变 status（仍是 completed）", rec(rid9)["status"] == "completed")
+check("详情页步骤条：开票这一步标为已完成",
+      'class="stage-step done"' in body(f"/records/{rid9}"))
+
+# 登记时选「不要」的，收齐后直接是「已收齐·无需开票」，不进开票待办
+rid9b = new_record("阶段标签无需开票", "0")
+client.post(f"/records/{rid9b}/submit", follow_redirects=True)
+client.post(f"/records/{rid9b}/receipts",
+            data={"trade_fee": "1200", "received_date": "2026-11-09"}, follow_redirects=True)
+check("不要开票的单收满后显示「已收齐·无需开票」",
+      stage_tag(f"/records/{rid9b}") == "已收齐·无需开票", stage_tag(f"/records/{rid9b}"))
+
+# 列表页 / 阶段筛选 / 导出口径一致（只取行内标签，别把筛选 chip 的文字也算进来）
+ROW_TAG_RE = r'<span class="tag" title="[^"]*"\s*style="[^"]*">([^<]+)</span>'
+
+
+def row_tags(path):
+    return re.findall(ROW_TAG_RE, body(path))
+
+
+tags_inv = row_tags("/records/?stage=invoice_pending")
+check("按「待开票」筛选后列表里只有待开票",
+      bool(tags_inv) and all(t == "待开票" for t in tags_inv), str(set(tags_inv)))
+check("「待开票」筛选不含已开票的单", "阶段标签客户" not in body("/records/?stage=invoice_pending"))
+tags_done = row_tags("/records/?stage=invoiced")
+check("按「已开票」筛选只出已开票",
+      bool(tags_done) and all(t == "已开票" for t in tags_done), str(set(tags_done)))
+tags_all = row_tags("/records/")
+check("不筛选时列表出现多种阶段", len(set(tags_all)) >= 3, str(set(tags_all)))
+check("按四态的老链接仍然可用（status=completed）",
+      client.get("/records/?status=completed").status_code == 200)
+
 print("\n" + "=" * 50)
 print(f"通过 {passed} 项，失败 {failed} 项")
 sys.exit(0 if failed == 0 else 1)

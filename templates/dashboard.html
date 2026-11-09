@@ -54,23 +54,23 @@
 
 <div class="card" style="margin-top:16px">
   <div class="card-head">
-    <div class="card-title">业务状态分布</div>
+    <div class="card-title">业务阶段分布</div>
     <a href="{{ url_for('records.index') }}" style="font-size:12.5px">查看全部业务 →</a>
   </div>
   <div class="card-body">
     <div style="display:flex;height:10px;border-radius:999px;overflow:hidden;background:#f1f2f4">
-      {% for s in STATUS_ORDER %}
+      {% for s in STAGE_ORDER %}
         {% if dist[s] %}
-        <div style="width:{{ (dist[s] / dist_total * 100) | round(2) }}%;background:{{ STATUS_META[s].color }}"
-             title="{{ STATUS_META[s].label }} {{ dist[s] }} 笔"></div>
+        <div style="width:{{ (dist[s] / dist_total * 100) | round(2) }}%;background:{{ STAGE_META[s].color }}"
+             title="{{ STAGE_META[s].label }} {{ dist[s] }} 笔"></div>
         {% endif %}
       {% endfor %}
     </div>
     <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px">
-      {% for s in STATUS_ORDER %}
-      <a href="{{ url_for('records.index', status=s) }}" style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-2)">
-        <i style="width:8px;height:8px;border-radius:50%;background:{{ STATUS_META[s].color }};display:inline-block"></i>
-        {{ STATUS_META[s].label }}
+      {% for s in STAGE_ORDER %}
+      <a href="{{ url_for('records.index', stage=s) }}" style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-2)">
+        <i style="width:8px;height:8px;border-radius:50%;background:{{ STAGE_META[s].color }};display:inline-block"></i>
+        {{ STAGE_META[s].label }}
         <b style="font-variant-numeric:tabular-nums">{{ dist[s] }}</b>
       </a>
       {% endfor %}

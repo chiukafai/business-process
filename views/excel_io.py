@@ -13,10 +13,10 @@ from openpyxl.utils import get_column_letter
 
 from auth import has_perm, login_required, perm_required, visible_scope
 from db import get_db
-from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES, calc_amounts,
-                   clean_company_name, customer_label, money, month_bounds, month_label,
-                   month_value, now_text, parse_date, parse_month, to_cents, to_rate,
-                   today, trade_fee_cents)
+from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES, STAGE_SQL,
+                   calc_amounts, clean_company_name, customer_label, money,
+                   month_bounds, month_label, month_value, now_text, parse_date,
+                   parse_month, stage_of, to_cents, to_rate, today, trade_fee_cents)
 
 bp = Blueprint("excel", __name__, url_prefix="/excel")
 
@@ -680,10 +680,14 @@ def _filtered_rows():
                 LEFT JOIN departments d ON d.id = r.dept_id
                 LEFT JOIN customers cu ON cu.id = r.customer_id
                WHERE {clause}"""
-    status = request.args.getlist("status")
-    if status:
-        sql += f" AND r.status IN ({','.join('?' * len(status))})"
-        params.extend(status)
+    stages = [s for s in request.args.getlist("stage") if s in STAGE_SQL]
+    if stages:
+        sql += " AND (" + " OR ".join(f"({STAGE_SQL[s]})" for s in stages) + ")"
+    else:
+        status = request.args.getlist("status")
+        if status:
+            sql += f" AND r.status IN ({','.join('?' * len(status))})"
+            params.extend(status)
     dept = request.args.get("dept")
     if dept:
         sql += " AND r.dept_id = ?"
@@ -717,7 +721,7 @@ def export():
 
     headers = list(TEMPLATE_HEADERS)
     if with_extra:
-        headers += ["系统状态", "登记人", "登记时间", "最后更新时间"]
+        headers += ["流程阶段", "登记人", "登记时间", "最后更新时间"]
 
     ws.append(headers)
 
@@ -734,8 +738,6 @@ def export():
         ws.column_dimensions[get_column_letter(col)].width = (
             COL_WIDTHS[col - 1] if col <= len(COL_WIDTHS) else 14
         )
-
-    from utils import status_label
 
     for r in rows:
         # 「是否开票」：否 = 登记时选了不要；是 = 需要开票；是（已开票）= 财务已确认
@@ -762,7 +764,7 @@ def export():
             r["receipt_no"] or "",
         ]
         if with_extra:
-            line += [status_label(r["status"]), r["owner_name"] or "",
+            line += [stage_of(r)["label"], r["owner_name"] or "",
                      r["created_at"] or "", r["updated_at"] or ""]
         ws.append(line)
 

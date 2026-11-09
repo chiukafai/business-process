@@ -11,9 +11,9 @@ from db import get_db
 from notifier import notify_next
 from workflow import can_invoice as can_register_invoice
 from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES,
-                   RECEIPT_ITEMS, calc_amounts, clean_company_name, customer_label,
-                   fee_total_cents, month_bounds, month_value, needs_invoice,
-                   now_text, parse_date, parse_month, receipt_items,
+                   RECEIPT_ITEMS, STAGE_SQL, calc_amounts, clean_company_name,
+                   customer_label, fee_total_cents, month_bounds, month_value,
+                   needs_invoice, now_text, parse_date, parse_month, receipt_items,
                    receipt_progress, status_label, to_cents, to_rate,
                    to_yuan_text, today, trade_fee_cents)
 
@@ -297,6 +297,7 @@ def index():
     db = get_db()
     page = max(1, int(request.args.get("page", 1) or 1))
     f_status = request.args.getlist("status")
+    f_stage = [s for s in request.args.getlist("stage") if s in STAGE_SQL]
     f_dept = request.args.get("dept", "")
     f_from = month_value(request.args.get("from", ""))
     f_to = month_value(request.args.get("to", ""))
@@ -305,7 +306,10 @@ def index():
     where, params = _scope_clause(g.user)
     clauses = [where]
 
-    if f_status:
+    # 阶段筛选优先；老链接里的 status 参数继续可用（按四态过滤）
+    if f_stage:
+        clauses.append("(" + " OR ".join(f"({STAGE_SQL[s]})" for s in f_stage) + ")")
+    elif f_status:
         clauses.append(f"r.status IN ({','.join('?' * len(f_status))})")
         params.extend(f_status)
     if f_dept:
@@ -362,7 +366,7 @@ def index():
     return render_template(
         "records.html",
         rows=rows, total=total, page=page, pages=pages, summary=summary,
-        depts=depts, f_status=f_status, f_dept=f_dept,
+        depts=depts, f_status=f_status, f_stage=f_stage, f_dept=f_dept,
         f_from=f_from, f_to=f_to, kw=kw,
     )
 

@@ -24,7 +24,7 @@
     <table class="tbl">
       <thead>
         <tr>
-          <th>状态</th><th>主体公司</th><th>归属部门</th><th>登记人</th>
+          <th>阶段</th><th>主体公司</th><th>归属部门</th><th>登记人</th>
           <th class="num">业务金额</th><th class="num">应收合计</th>
           <th class="num">{% if active_tab == 'invoice' %}已收{% else %}待收{% endif %}</th>
           <th>等待</th><th style="width:150px">操作</th>
@@ -32,8 +32,10 @@
       </thead>
       <tbody>
         {% for r in rows %}
+        {% set st = stage_of(r) %}
         <tr class="{% if r.updated_at | stale %}stale-row{% endif %}">
-          <td><span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span></td>
+          <td><span class="tag" title="{{ st.hint }}"
+                    style="background:{{ st.bg }};color:{{ st.color }};border-color:{{ st.bd }}">{{ st.label }}</span></td>
           <td class="cust"><a href="{{ url_for('records.detail', record_id=r.id) }}">{{ r.customer_label or r.customer_name }}</a></td>
           <td>{{ r.dept_name or '' }}</td>
           <td>{{ r.owner_display or r.owner_name or '' }}</td>
@@ -61,9 +63,11 @@
 
   <div class="rec-cards" style="padding:12px">
     {% for r in rows %}
+    {% set st = stage_of(r) %}
     <a class="rec-card" {% if r.updated_at | stale %}style="background:#fffbeb"{% endif %} href="{{ url_for('records.detail', record_id=r.id) }}">
       <div class="rc-top">
-        <span class="tag tag-{{ r.status }}">{{ status_label(r.status) }}</span>
+        <span class="tag" title="{{ st.hint }}"
+              style="background:{{ st.bg }};color:{{ st.color }};border-color:{{ st.bd }}">{{ st.label }}</span>
         <span class="rc-cust">{{ r.customer_label or r.customer_name }}</span>
       </div>
       <div class="rc-mid">
