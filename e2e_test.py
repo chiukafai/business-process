@@ -156,8 +156,9 @@ def proceed(application, client, depts):
 
     print("\n=== 6. 财务登记收款（分批） ===")
     login_as(client, "fin")
-    r = client.get("/todos/?tab=collect")
-    check("财务「待收款跟进」里出现该单", "测试客户A" in r.get_data(as_text=True))
+    r = client.get("/todos/")
+    todos_fin = r.get_data(as_text=True)
+    check("财务待办里没有「待收款跟进」（不是财务该跟的活）", "待收款跟进" not in todos_fin)
     r = client.post(f"/records/{record_id}/receipts", data={
         "trade_fee": "12000", "retention": "2000", "received_date": "2026-11-05",
         "receipt_no": "HD20261105001", "note": "首款",

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}我的通知{% endblock %}
+{% block page_title %}我的通知{% endblock %}
+
+{% block topbar_actions %}
+{% if unread %}
+<form method="post" action="{{ url_for('notifications.read_all') }}">
+  <button class="btn btn-sm" type="submit">全部标为已读</button>
+</form>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="card-head">
+    <div class="card-title">最近通知</div>
+    <span style="font-size:11.5px;color:var(--muted-2)">
+      流程轮到你这儿时留一条 · {% if unread %}未读 {{ unread }} 条{% else %}全部已读{% endif %}
+    </span>
+  </div>
+
+  {% if rows %}
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th style="width:150px">时间</th>
+          <th style="width:120px">环节</th>
+          <th>内容</th>
+          <th style="width:90px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for n in rows %}
+        <tr {% if not n.read_at %}style="background:#f8fafc"{% endif %}>
+          <td style="white-space:nowrap;color:var(--muted)">{{ n.created_at }}</td>
+          <td style="white-space:nowrap">
+            {% if not n.read_at %}<b style="color:#1d4ed8">未读</b> {% endif %}
+            {{ event_labels.get(n.event, n.event or '提醒') }}
+          </td>
+          <td>
+            <div style="font-weight:600">{{ n.title }}</div>
+            <div style="color:var(--muted);font-size:12px;line-height:1.7">{{ n.body }}</div>
+          </td>
+          <td>
+            <a class="btn btn-sm" href="{{ url_for('notifications.open_item', nid=n.id) }}">查看</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    <div class="ico">—</div>
+    <div class="txt">还没有通知：流程轮到你处理时会在这里留一条</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

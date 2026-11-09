@@ -71,6 +71,7 @@ def create_app():
     from views.admin import bp as admin_bp
     from views.excel_io import bp as excel_bp
     from views.customers import bp as customers_bp
+    from views.notifications import bp as notifications_bp
 
     app.register_blueprint(auth_module.bp)
     app.register_blueprint(dashboard_bp)
@@ -79,6 +80,7 @@ def create_app():
     app.register_blueprint(admin_bp)
     app.register_blueprint(excel_bp)
     app.register_blueprint(customers_bp)
+    app.register_blueprint(notifications_bp)
 
     # 蓝图的根路径映射到登录/看板
     @app.route("/")
@@ -103,6 +105,15 @@ def create_app():
                                  "invoice": 0, "revise": 0, "mine": 0}
         return g.badge_cache
 
+    def _notify_unread():
+        """侧边栏「我的通知」红点：每个请求只查一次。"""
+        if "notify_cache" not in g:
+            g.notify_cache = 0
+            if g.get("user"):
+                from views.notifications import unread_count
+                g.notify_cache = unread_count(g.user)
+        return g.notify_cache
+
     @app.context_processor
     def inject_globals():
         perm_labels = {}
@@ -117,6 +128,7 @@ def create_app():
             "can_delete_record": auth_module.can_delete_record,
             "PERM_LABELS": perm_labels,
             "todo_badge": _todo_badge(),
+            "notify_unread": _notify_unread(),
             "STATUS_META": utils.STATUS_META,
             "STATUS_ORDER": utils.STATUS_ORDER,
             "ROLE_LABELS": utils.ROLE_LABELS,

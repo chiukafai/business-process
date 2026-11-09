@@ -183,6 +183,23 @@ def _migrate(db):
         "CREATE INDEX IF NOT EXISTS idx_receipts_record ON record_receipts(record_id, id)"
     )
 
+    # 1.1.2 站内通知（企业微信没配也能在系统内收到提醒）
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS notifications (
+             id         INTEGER PRIMARY KEY AUTOINCREMENT,
+             user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+             record_id  INTEGER REFERENCES records(id) ON DELETE CASCADE,
+             event      TEXT,
+             title      TEXT NOT NULL,
+             body       TEXT,
+             created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+             read_at    TEXT
+           )"""
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notify_user ON notifications(user_id, id DESC)"
+    )
+
     # 1.1.1 老流水的金额没有分项：整笔归到贸易费，让分项进度不至于全是 0
     done_items = db.execute(
         "SELECT value FROM app_settings WHERE key = 'receipt_items_v1'"

@@ -171,6 +171,19 @@ CREATE TABLE IF NOT EXISTS record_logs (
   created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
+-- 站内通知：流程节点变化时给下一步负责人留一条。
+-- 企业微信没配置、或某人没填 userid 时，站内通知仍然可见，不至于「什么都没收到」。
+CREATE TABLE IF NOT EXISTS notifications (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  record_id  INTEGER REFERENCES records(id) ON DELETE CASCADE,
+  event      TEXT,
+  title      TEXT NOT NULL,
+  body       TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  read_at    TEXT
+);
+
 -- 系统设置（企业微信凭据等键值对）
 CREATE TABLE IF NOT EXISTS app_settings (
   key         TEXT PRIMARY KEY,
@@ -186,4 +199,5 @@ CREATE INDEX IF NOT EXISTS idx_records_customer  ON records(customer_name);
 CREATE INDEX IF NOT EXISTS idx_records_receipt   ON records(receipt_no);
 CREATE INDEX IF NOT EXISTS idx_logs_record       ON record_logs(record_id, id);
 CREATE INDEX IF NOT EXISTS idx_logs_created      ON record_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notify_user       ON notifications(user_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_customers_active  ON customers(is_active, name);

@@ -27,6 +27,10 @@
       我的待办
       {% if todo_badge.total %}<span class="badge-dot">{{ todo_badge.total }}</span>{% endif %}
     </a>
+    <a href="{{ url_for('notifications.index') }}" class="nav-item {% if request.endpoint and request.endpoint.startswith('notifications.') %}active{% endif %}">
+      我的通知
+      {% if notify_unread %}<span class="badge-dot">{{ notify_unread }}</span>{% endif %}
+    </a>
     {% if can('customer.view') %}
     <a href="{{ url_for('customers.index') }}" class="nav-item {% if request.endpoint and request.endpoint.startswith('customers.') %}active{% endif %}">客户档案</a>
     {% endif %}

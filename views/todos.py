@@ -9,7 +9,7 @@
 """
 from flask import Blueprint, g, render_template, request
 
-from auth import has_perm, login_required, visible_scope
+from auth import has_perm, login_required, user_perms, visible_scope
 from db import get_db
 from utils import CUSTOMER_LABEL_SQL
 from workflow import is_receipt_staff
@@ -19,7 +19,7 @@ bp = Blueprint("todos", __name__, url_prefix="/todos")
 TODO_META = {
     "receipt": {"label": "待我确认收款", "hint": "资管待确认的收款，确认后会自动通知业务员",
                 "action_label": "去确认"},
-    "collect": {"label": "待收款跟进", "hint": "本部门还没收齐的业务，可协助登记收款",
+    "collect": {"label": "待收款跟进", "hint": "本部门还没收齐的业务（主管视角），可协助登记收款",
                 "action_label": "去收款"},
     "invoice": {"label": "待我确认开票", "hint": "已收齐且登记时选了「要开票」的业务，确认开票后流程结束",
                 "action_label": "去开票"},
@@ -134,8 +134,21 @@ def build_todos(user):
 
 
 def _can_collect(user):
-    return (has_perm(user, "record.pay") or has_perm(user, "record.view_dept")
-            or has_perm(user, "record.view_all"))
+    """「待收款跟进」只给**主管**（看本部门进度，可协助登记收款）。
+
+    财务（`record.pay` / `record.view_all`）不在这里：待收款是资管的活，
+    财务只在「待我确认收款」轮到自己、或收齐后「待我确认开票」时才出现。
+    否则别人的待收业务会天天挂在财务待办里，天天收到与自己无关的跟进提醒。
+
+    注意这里不用 has_perm('record.view_dept')：权限表里 view_all 是 view_dept
+    的父级（有 view_all 的人自动通过 view_dept 判定），财务正是靠 view_all
+    看全公司数据的，用 has_perm 会把财务又漏进来。
+    """
+    if not user:
+        return False
+    if user["role"] == "admin":
+        return True
+    return "record.view_dept" in user_perms(user)
 
 
 def visible_tabs(user):
