@@ -96,15 +96,16 @@ with application.app_context():
             oname = db.execute("SELECT name FROM users WHERE id=?", (oid,)).fetchone()["name"]
             cur = db.execute(
                 """INSERT INTO records (status, owner_id, owner_name, dept_id, biz_type,
-                       prepaid_mode, biz_date, is_invoiced, customer_name, fee_service_cents,
+                       prepaid_mode, biz_date, is_invoiced, invoice_needed, customer_name,
+                       fee_service_cents,
                        biz_amount_cents, fee_rate, channel_commission_cents,
                        company_income_cents, aux_fee_cents, payable_amount_cents,
                        prepaid_amount_cents, received_amount_cents, receipt_closed,
                        unpaid_amount_cents, paid_date, receipt_no, remark,
                        created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (status, oid, oname, dept_id[dept], btype, prepaid_mode, bdate,
-                 1 if status == "completed" else 0, cust, int(amt_c * 0.001),
+                 1 if status == "completed" else 0, 1, cust, int(amt_c * 0.001),
                  amt_c, rate, comm_c,                  amounts["company_income_cents"],
                  0, payable, prepaid_c, paid_c,
                  1 if status == "completed" else 0,

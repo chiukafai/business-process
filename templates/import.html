@@ -19,7 +19,7 @@
       <div class="stat accent">
         <div class="stat-label">成功导入</div>
         <div class="stat-value">{{ result.inserted }}</div>
-        <div class="stat-hint">均已落为「报批中」，核对后提交进入收款</div>
+        <div class="stat-hint">本批开票口径：<b>{{ result.invoice_mode }}</b> · 均为「报批中」</div>
       </div>
       <div class="stat">
         <div class="stat-label">跳过行数</div>
@@ -34,7 +34,7 @@
       <div class="stat">
         <div class="stat-label">口径告警</div>
         <div class="stat-value">{{ result.warned | length }}</div>
-        <div class="stat-hint">已导入，但金额与原表不一致</div>
+        <div class="stat-hint">已导入，但金额或开票口径与原表不一致</div>
       </div>
     </div>
 
@@ -48,7 +48,8 @@
         <thead>
           <tr>
             <th>主体公司</th><th>归属部门</th><th>月份</th>
-            <th class="num">明细行</th><th class="num">业务金额</th><th>上游公司</th>
+            <th class="num">明细行</th><th class="num">业务金额</th>
+            <th>开票</th><th>上游公司</th>
           </tr>
         </thead>
         <tbody>
@@ -59,6 +60,7 @@
             <td style="white-space:nowrap">{{ g.month }}</td>
             <td class="num">{{ g.rows }}</td>
             <td class="num">{{ money(g.amount) }}</td>
+            <td style="white-space:nowrap;color:{% if g.invoice == '要开票' %}var(--text){% else %}var(--muted){% endif %}">{{ g.invoice }}</td>
             <td style="color:var(--muted)">{{ g.upstream or '—' }}</td>
           </tr>
           {% endfor %}
@@ -149,6 +151,23 @@
         <input type="file" name="file" id="fileInput" accept=".xlsx,.xlsm" style="display:none">
       </div>
 
+      <div class="field" style="margin-top:18px;max-width:560px">
+        <label>本批数据是否需要开票<span class="req">*</span></label>
+        <div style="display:flex;gap:22px;align-items:center;height:36px">
+          <label class="check">
+            <input type="radio" name="invoice_batch" value="1" required> 要开票
+          </label>
+          <label class="check">
+            <input type="radio" name="invoice_batch" value="0"> 不开票
+          </label>
+        </div>
+        <span class="hint">
+          贸易计划模板里没有「是否开票」这一列，所以导入前必须在这里确认一次：
+          选「要开票」→ 收齐款项后转财务确认开票；选「不开票」→ 自动跳过开票环节。
+          表内若自带「是否开票」列，以表内为准
+        </span>
+      </div>
+
       <div style="margin-top:16px;font-size:12px;color:var(--muted-2);line-height:1.8">
         归属部门只看两处：表格里写了「归属部门」→ 以表格为准；没写 → 按客户档案里该主体公司的归属部门。
         <b style="color:var(--warn)">档案里没挂部门的，归属部门留空（待确认），不会按导入人的部门归属</b>，
@@ -169,7 +188,8 @@
         8. 含合计 / 汇总 / 小计公式的行会自动跳过，不会当成业务导入；合计行的 K 列值用于核对留存利润<br>
         9. 归属部门：表格「归属部门」列 → 客户档案里该主体公司的归属部门；两者都没有则<b>留空待确认</b>，不按导入人的部门归属<br>
         10. 导入的记录一律为「报批中」，核对无误后提交即进入「待收款」，由资管确认款项到账、每确认一轮会通知登记人；归属部门为空的必须先确认部门才能提交<br>
-        11. 「是否开票」列：写「是」= 需要开票（收齐后转财务确认），写「否」= 不需要开票（自动跳过），留空则由财务在收齐后确认<br>
+        11. <b>「是否开票」在上传时必选一次</b>：本批选「要开票」→ 收齐后转财务确认；选「不开票」→ 自动跳过开票环节。
+        表内若自带「是否开票」列（写「是 / 否 / 是（已开票）」），<b>以表内为准</b>，与本批选择不同的行会在下方告警<br>
         12. 主体公司若在客户档案里不存在，会自动建档（同时写入客户名称与主体公司，归属部门留空待确认）
       </div>
     </div>

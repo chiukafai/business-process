@@ -121,6 +121,35 @@
   </div>
 </div>
 
+<!-- 开票口径没确认（导入的贸易计划没有这一列）→ 提交前必须补一次 -->
+{% if actions.invoice_unset %}
+<div class="card" id="invoiceNeededCard">
+  <div class="card-head">
+    <div class="card-title" style="color:#c2410c">待确认：是否需要开票</div>
+    <span style="font-size:11.5px;color:var(--muted-2)">这项没确认，不能提交进入收款</span>
+  </div>
+  <div class="card-body">
+    {% if actions.can_set_invoice_needed %}
+    <form method="post" action="{{ url_for('records.invoice_needed_set', record_id=rec.id) }}">
+      <div style="display:flex;gap:22px;align-items:center;flex-wrap:wrap">
+        <label class="check"><input type="radio" name="invoice_needed" value="1" required> 要开票</label>
+        <label class="check"><input type="radio" name="invoice_needed" value="0"> 不要开票</label>
+        <button class="btn btn-primary btn-sm" type="submit">确认</button>
+      </div>
+      <div style="margin-top:10px;font-size:11.5px;color:var(--muted-2);line-height:1.8">
+        导入 Excel（尤其贸易计划模板）没有「是否开票」列，所以单据带过来是空的。<br>
+        选「要开票」→ 贸易费 / 留存利润 / 资金过夜费都收齐后转财务确认开票；选「不要开票」→ 自动跳过开票环节
+      </div>
+    </form>
+    {% else %}
+    <div style="font-size:12.5px;color:var(--muted)">
+      这项由登记人或财务确认，请联系登记人补选后再提交
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-head"><div class="card-title">登记信息</div></div>
   <div class="kv-grid">
@@ -134,7 +163,10 @@
     <div class="kv"><div class="k">报送计划时间</div><div class="v">{{ rec.report_plan_date or '—' }}</div></div>
     <div class="kv"><div class="k">计划出具日期</div><div class="v">{{ rec.issue_plan_date or '—' }}</div></div>
     <div class="kv"><div class="k">是否开票</div>
-      <div class="v">{{ invoice_status(rec).label }}</div>
+      <div class="v">
+        {% if actions.invoice_unset %}<b style="color:#c2410c">待确认</b>
+        {% else %}{{ invoice_status(rec).label }}{% endif %}
+      </div>
     </div>
     <div class="kv"><div class="k">回单编号</div><div class="v">{{ rec.receipt_no or '—' }}</div></div>
     <div class="kv"><div class="k">收款账户</div><div class="v">{{ rec.receive_account or '—' }}</div></div>

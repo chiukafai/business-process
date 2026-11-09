@@ -133,7 +133,7 @@ check("管理员登录", "退出" in client.get("/dashboard").get_data(as_text=T
 
 print("\n=== 3. 导入贸易计划模板（按主体公司汇总） ===")
 with open(XLSX, "rb") as fh:
-    payload = {"file": (fh, os.path.basename(XLSX))}
+    payload = {"file": (fh, os.path.basename(XLSX)), "invoice_batch": "1"}
     resp = client.post("/excel/import", data=payload,
                        content_type="multipart/form-data", follow_redirects=True)
 body = resp.get_data(as_text=True)
@@ -349,7 +349,8 @@ buf.seek(0)
 # 档案挂了市场部的主体公司必须跟着档案走；档案没挂部门的一律留空待确认，
 # 绝不能按导入人的部门兜底。
 resp = client.post("/excel/import",
-                   data={"file": (buf, "部门归属测试.xlsx"), "default_dept": str(dept_a)},
+                   data={"file": (buf, "部门归属测试.xlsx"), "default_dept": str(dept_a),
+                         "invoice_batch": "1"},
                    content_type="multipart/form-data", follow_redirects=True)
 body = resp.get_data(as_text=True)
 

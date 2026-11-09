@@ -512,8 +512,12 @@ def detail(record_id):
                       or (is_owner and rec["status"] == "draft"),
         # 归属部门没确认不能提交（否则收款的部门口径就是错的）
         "can_submit": is_owner and rec["status"] in ("draft", "rejected")
-                      and bool(rec["dept_id"]),
+                      and bool(rec["dept_id"]) and rec["invoice_needed"] is not None,
         "dept_pending": not rec["dept_id"],
+        # 开票口径是否已确认：导入的贸易计划没有这一列，容易一路带到底
+        "invoice_unset": rec["invoice_needed"] is None,
+        "can_set_invoice_needed": (is_owner or has_perm(me, "record.edit"))
+                                  and rec["status"] in ("draft", "rejected", "pending_payment"),
         "can_withdraw": is_owner and rec["status"] == "pending_payment",
         # 收款：业务员本人 + 有收款权限的人（财务）
         "can_receive": can_receive_record(me, rec),
@@ -618,6 +622,11 @@ def submit(record_id):
         return redirect(url_for("records.detail", record_id=record_id))
     if not rec["dept_id"]:
         flash("请先确认归属部门，再提交进入收款", "error")
+        return redirect(url_for("records.detail", record_id=record_id))
+    # 开票口径没确认（导入的单子、历史单据）不让提交：
+    # 否则一路走到收齐，财务才知道该不该开票，退回来又要重走流程
+    if rec["invoice_needed"] is None:
+        flash("请先确认这笔业务是否需要开票（要 / 不要），再提交", "error")
         return redirect(url_for("records.detail", record_id=record_id))
 
     db = get_db()
@@ -757,6 +766,42 @@ def _recalc_receipt_state(db, record_id):
 
 
 # ---------- 开票登记（收款后，财务） ----------
+
+@bp.route("/<int:record_id>/invoice-needed", methods=("POST",))
+@login_required
+def invoice_needed_set(record_id):
+    """提交前补确认「是否需要开票」。
+
+    Excel 导入（尤其贸易计划模板）没有这一列，历史单据也可能为空；
+    空值在系统里按「需要开票」兜底，但收齐后才由财务被动发现不对，
+    所以提交前必须先由业务员/财务明确选一次。
+    """
+    rec = get_record_or_404(record_id)
+    back = redirect(url_for("records.detail", record_id=record_id))
+    if rec["owner_id"] != g.user["id"] and not has_perm(g.user, "record.edit"):
+        abort(403)
+    if rec["status"] not in ("draft", "rejected", "pending_payment"):
+        flash("已进入收款后续环节，不能再改开票口径", "error")
+        return back
+
+    raw = (request.form.get("invoice_needed") or "").strip()
+    if raw not in ("0", "1"):
+        flash("请选择是否需要开票（要 / 不要）", "error")
+        return back
+    needed = int(raw)
+
+    db = get_db()
+    db.execute(
+        "UPDATE records SET invoice_needed = ?, is_invoiced = ?, updated_at = ? WHERE id = ?",
+        (needed, int(rec["is_invoiced"] or 0) if needed else 0, now_text(), record_id),
+    )
+    _log(db, record_id, "invoice", rec["status"], rec["status"],
+         "确认开票口径：" + ("需要开票" if needed else "不需要开票"))
+    db.commit()
+    flash("已确认开票口径：" + ("需要开票，收齐后转财务确认" if needed else "不需要开票，自动跳过开票环节"),
+          "ok")
+    return back
+
 
 @bp.route("/<int:record_id>/invoice", methods=("POST",))
 @perm_required("record.invoice")

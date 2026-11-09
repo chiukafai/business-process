@@ -75,7 +75,7 @@ def main():
 
     print("\n=== 1. 导入校验 ===")
     r = client.post("/excel/import",
-                    data={"file": (build_xlsx(), "业务登记_测试.xlsx")},
+                    data={"file": (build_xlsx(), "业务登记_测试.xlsx"), "invoice_batch": "1"},
                     content_type="multipart/form-data",
                     follow_redirects=True)
     body = r.get_data(as_text=True)
@@ -153,7 +153,7 @@ def main():
     buf2 = io.BytesIO()
     wb2.save(buf2)
     buf2.seek(0)
-    resp2 = client.post("/excel/import", data={"file": (buf2, "汇总测试.xlsx")},
+    resp2 = client.post("/excel/import", data={"file": (buf2, "汇总测试.xlsx"), "invoice_batch": "1"},
                         content_type="multipart/form-data", follow_redirects=True)
     body2 = resp2.get_data(as_text=True)
     with application.app_context():
@@ -186,7 +186,7 @@ def main():
     buf3 = io.BytesIO()
     wb3.save(buf3)
     buf3.seek(0)
-    resp3 = client.post("/excel/import", data={"file": (buf3, "贸易计划_测试.xlsx")},
+    resp3 = client.post("/excel/import", data={"file": (buf3, "贸易计划_测试.xlsx"), "invoice_batch": "1"},
                         content_type="multipart/form-data", follow_redirects=True)
     body3 = resp3.get_data(as_text=True)
     with application.app_context():
@@ -231,7 +231,7 @@ def main():
     buf2 = io.BytesIO()
     wb2.save(buf2)
     buf2.seek(0)
-    r6 = client.post("/excel/import", data={"file": (buf2, "贸易费_测试.xlsx")},
+    r6 = client.post("/excel/import", data={"file": (buf2, "贸易费_测试.xlsx"), "invoice_batch": "1"},
                      content_type="multipart/form-data", follow_redirects=True)
     body6 = r6.get_data(as_text=True)
     with application.app_context():
@@ -256,7 +256,7 @@ def main():
     buf3 = io.BytesIO()
     wb3.save(buf3)
     buf3.seek(0)
-    client.post("/excel/import", data={"file": (buf3, "贸易费_空列.xlsx")},
+    client.post("/excel/import", data={"file": (buf3, "贸易费_空列.xlsx"), "invoice_batch": "1"},
                 content_type="multipart/form-data", follow_redirects=True)
     with application.app_context():
         got2 = get_db().execute(
@@ -266,8 +266,92 @@ def main():
           str(got2["payable_amount_cents"]) if got2 else "未导入")
 
 
-if __name__ == "__main__":
-    main()
+    print("\n=== 7. 导入前必须确认「是否开票」 ===")
+    # 7.1 没选口径直接导入 → 拦下，一条都不写
+    with application.app_context():
+        before = get_db().execute("SELECT COUNT(*) c FROM records").fetchone()["c"]
+    r7 = client.post("/excel/import", data={"file": (build_xlsx(), "未选开票.xlsx")},
+                     content_type="multipart/form-data", follow_redirects=True)
+    body7 = r7.get_data(as_text=True)
+    with application.app_context():
+        after = get_db().execute("SELECT COUNT(*) c FROM records").fetchone()["c"]
+    check("未确认开票口径时导入被拦下", "请先确认本批数据是否需要开票" in body7)
+    check("被拦时一条都没写入", after == before, f"{before} → {after}")
+
+    # 7.2 贸易计划模板没有开票列 → 用本批确认的「不开票」
+    wb7 = Workbook()
+    ws7 = wb7.active
+    ws7.append(["大类", "品种", "上游公司", "数量", "单价", "金额", "主体公司",
+                "数量2", "单价2", "金额2", "利润1", "下游公司"])
+    ws7.append(["叶菜", "菜心", "长沙易汐", 10, 5, 50, "不开票客户", 10, 5.2, 52, 2, ""])
+    buf7 = io.BytesIO()
+    wb7.save(buf7)
+    buf7.seek(0)
+    r7b = client.post("/excel/import",
+                      data={"file": (buf7, "贸易计划_不开票.xlsx"), "invoice_batch": "0"},
+                      content_type="multipart/form-data", follow_redirects=True)
+    body7b = r7b.get_data(as_text=True)
+    with application.app_context():
+        n7 = get_db().execute(
+            "SELECT * FROM records WHERE customer_name = '不开票客户'").fetchone()
+    check("选「不开票」导入后 invoice_needed = 0",
+          n7 is not None and n7["invoice_needed"] == 0,
+          str(n7["invoice_needed"]) if n7 else "未导入")
+    check("结果页回显本批开票口径", "本批开票口径" in body7b and "不开票" in body7b)
+    check("结果页说明文件里没有开票列", "文件里没有「是否开票」列" in body7b)
+    check("汇总表列出「开票」列", ">开票</th>" in body7b)
+
+    # 7.3 表内写了开票口径 → 以表内为准，与本批选择冲突时告警
+    wb7c = Workbook()
+    ws7c = wb7c.active
+    ws7c.append(TEMPLATE_HEADERS)
+    ws7c.append([{"归属部门": "集团总部", "类型": "代采", "预存与否": "后付",
+                  "月份": "2026/12/01", "是否开票": "是", "主体公司": "表内优先客户",
+                  "业务金额": 100000, "费率": 1, "留存利润": 0}.get(h)
+                 for h in TEMPLATE_HEADERS])
+    buf7c = io.BytesIO()
+    wb7c.save(buf7c)
+    buf7c.seek(0)
+    r7c = client.post("/excel/import",
+                      data={"file": (buf7c, "表内开票优先.xlsx"), "invoice_batch": "0"},
+                      content_type="multipart/form-data", follow_redirects=True)
+    body7c = r7c.get_data(as_text=True)
+    with application.app_context():
+        n7c = get_db().execute(
+            "SELECT * FROM records WHERE customer_name = '表内优先客户'").fetchone()
+    check("表内「是」覆盖本批的「不开票」→ invoice_needed = 1",
+          n7c is not None and n7c["invoice_needed"] == 1,
+          str(n7c["invoice_needed"]) if n7c else "未导入")
+    check("冲突行在结果页告警", "与本次选的本批口径" in body7c)
+
+    # 7.4 开票口径为空时不能提交；补确认后可提交
+    print("\n=== 7.4 开票口径为空 → 不能提交 ===")
+    with application.app_context():
+        db = get_db()
+        target = db.execute(
+            "SELECT id FROM records WHERE customer_name = '广州华农贸易' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        db.execute("UPDATE records SET invoice_needed = NULL WHERE id = ?", (target["id"],))
+        db.commit()
+    rid7 = target["id"]
+    d7 = client.get(f"/records/{rid7}").get_data(as_text=True)
+    check("详情页出现「待确认：是否需要开票」卡片", "待确认：是否需要开票" in d7)
+    check("开票口径没确认时提交按钮不出现", "提交并进入收款" not in d7)
+    r7d = client.post(f"/records/{rid7}/submit", follow_redirects=True)
+    check("直接提交被拦下", "请先确认这笔业务是否需要开票" in r7d.get_data(as_text=True))
+    r7e = client.post(f"/records/{rid7}/invoice-needed",
+                      data={"invoice_needed": "0"}, follow_redirects=True)
+    check("补确认后提示已确认", "已确认开票口径" in r7e.get_data(as_text=True))
+    with application.app_context():
+        got7 = get_db().execute("SELECT * FROM records WHERE id = ?", (rid7,)).fetchone()
+    check("invoice_needed 落库为 0", got7["invoice_needed"] == 0, str(got7["invoice_needed"]))
+    d7b = client.get(f"/records/{rid7}").get_data(as_text=True)
+    check("确认后提交按钮恢复", "提交并进入收款" in d7b)
+    r7f = client.post(f"/records/{rid7}/submit", follow_redirects=True)
+    check("确认后可提交进入待收款",
+          "已提交，进入待收款" in r7f.get_data(as_text=True))
+
+
     print("\n" + "=" * 46)
     print(f"通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
@@ -275,3 +359,6 @@ if __name__ == "__main__":
             print("  - " + f)
         sys.exit(1)
     print("全部通过 ✅")
+
+if __name__ == "__main__":
+    main()

@@ -202,6 +202,14 @@ def import_page():
         flash("只支持 .xlsx 格式（如为 .xls 请先用 Excel 另存为 .xlsx）", "error")
         return redirect(url_for("excel.import_page"))
 
+    # 「是否开票」：贸易计划这类模板根本没有这一列，所以导入前必须先在上传页
+    # 明确确认本批数据要不要开票——否则开票字段是空的，收齐后没人知道该不该开票。
+    raw_batch_invoice = (request.form.get("invoice_batch") or "").strip()
+    if raw_batch_invoice not in ("1", "0"):
+        flash("请先确认本批数据是否需要开票（要开票 / 不开票），再开始导入", "error")
+        return redirect(url_for("excel.import_page"))
+    batch_invoice = int(raw_batch_invoice)
+
     raw = file.read()
     try:
         wb = load_workbook(io.BytesIO(raw), data_only=True)
@@ -266,6 +274,8 @@ def import_page():
     # 档案里这家主体公司挂了部门 → 用它；没挂 → 归属部门留空（待确认），
     # 不按导入人的部门归属，避免把别人的业务塞进导入者所属部门。
     bad_rows, warned, skipped_rows = [], [], []
+    # 开票口径：表内有值的行数、与本次选择不一致的行（按表内为准）
+    invoice_from_sheet, invoice_conflict = 0, []
     renamed = {}          # 原名 → 清理后的名称，供结果页说明
     dept_from_master = {}  # 主体公司 → 档案里的部门名（按档案归属的）
     dept_missing = {}      # 主体公司 → 行号（档案没挂部门，归属留空待确认）
@@ -333,15 +343,27 @@ def import_page():
         prepaid = to_cents(cell("prepaid_amount")) or 0
         received = to_cents(cell("received_amount")) or 0
 
-        # 「是否开票」：是 / 是（已开票）/ 否 / 空
+        # 「是否开票」：表内写了就以表内为准（是 / 是（已开票）/ 否），
+        # 留空或整列不存在（贸易计划模板就没有这一列）则用上传页确认的本批口径
         raw_invoice = str(cell("is_invoiced") or "").strip()
         if raw_invoice == "":
-            invoice_needed, is_invoiced = None, 0
+            invoice_needed, is_invoiced = batch_invoice, 0
         elif _to_bool(raw_invoice) or raw_invoice.startswith("是"):
             invoice_needed = 1
             is_invoiced = 1 if "已开" in raw_invoice else 0
         else:
             invoice_needed, is_invoiced = 0, 0
+        if raw_invoice:
+            invoice_from_sheet += 1
+            if invoice_needed != batch_invoice:
+                invoice_conflict.append({
+                    "row": offset, "customer": customer_name,
+                    "reason": ("表里写「" + raw_invoice + "」= "
+                               + ("要开票" if invoice_needed else "不开票")
+                               + "，与本次选的本批口径（"
+                               + ("要开票" if batch_invoice else "不开票")
+                               + "）不同，已按表内为准"),
+                })
 
         # 部门优先级：表格里写了 → 按表格；没写 → 按客户档案里该主体公司的归属部门；
         # 档案也没挂 → 留空（待确认），不按导入人的部门兜底。
@@ -529,6 +551,7 @@ def import_page():
             "rows": len(items),
             "amount": total_amount,
             "upstream": upstream,
+            "invoice": "要开票" if ok_rows[-1]["invoice_needed"] == 1 else "不开票",
         })
 
     # 主体公司 → 客户档案（导入时自动建档，避免客户模块卡住批量导入）
@@ -574,6 +597,13 @@ def import_page():
         db.commit()
 
     notes = []
+    invoice_text = "要开票" if batch_invoice else "不开票"
+    if "is_invoiced" not in col_map:
+        notes.append(f"文件里没有「是否开票」列，本批 {inserted} 条业务按上传时确认的口径"
+                     f"记为「{invoice_text}」；如有个别单据不同，可在业务详情里单条改")
+    else:
+        notes.append(f"开票口径：本批默认「{invoice_text}」，表内「是否开票」列写了的 "
+                     f"{invoice_from_sheet} 行以表内为准（不一致 {len(invoice_conflict)} 行已在下方告警）")
     merged = sum(g["rows"] for g in groups_preview)
     if groups_preview:
         notes.append(
@@ -615,6 +645,8 @@ def import_page():
     if ignored_cols:
         notes.append("以下列未导入：" + "、".join(ignored_cols))
 
+    warned.extend(invoice_conflict)
+
     result = {
         "inserted": inserted,
         "bad": bad_rows,
@@ -624,7 +656,9 @@ def import_page():
         "groups": groups_preview,
         "notes": notes,
         "header_row": header_row_idx + 1,
-        "warned_rule": "金额口径核对：K 列合计 / 表里的贸易费与系统按公式算的不一致",
+        "invoice_mode": invoice_text,
+        "warned_rule": "金额口径核对：K 列合计 / 表里的贸易费与系统按公式算的不一致；"
+                       "开票口径：表内「是否开票」与本次选择不一致",
     }
     return render_template("import.html", result=result, depts=depts)
 
