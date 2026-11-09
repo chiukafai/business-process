@@ -9,6 +9,7 @@ from auth import (can_delete_record, can_receive_record, can_register_fee,
                   visible_scope)
 from db import get_db
 from notifier import notify_next
+from workflow import can_invoice as can_register_invoice
 from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, FEE_TYPES,
                    calc_amounts, clean_company_name, customer_label,
                    fee_total_cents, month_bounds, month_value, now_text,
@@ -229,7 +230,8 @@ def _read_form(form, db=None, rec=None):
         "biz_date": biz_date,
         "report_plan_date": parse_date(form.get("report_plan_date")),
         "issue_plan_date": parse_date(form.get("issue_plan_date")),
-        "is_invoiced": 1 if form.get("is_invoiced") in ("1", "on", "true") else 0,
+        # 「是否开票」已挪到收款后，由财务（record.invoice）在详情页登记；
+        # 这里不再读表单，新建时用库默认 0，编辑时保留原值不动。
         "customer_id": customer_id,
         "customer_name": customer_name,
         "upstream_company": clean_company_name(form.get("upstream_company")),
@@ -383,12 +385,12 @@ def new():
                 (now_text(), now_text(), record_id),
             )
             _log(db, record_id, "submit", "draft", "pending_payment",
-                 "提交，进入待收款，提醒业务员收取客户款项")
+                 "提交，进入待收款，提醒资管确认收款")
             notify_next(db, record_id, "submit")
 
         db.commit()
         if request.form.get("action") == "submit":
-            flash("已提交，进入待收款：请提醒业务员跟进收取客户款项", "ok")
+            flash("已提交，进入待收款：等待资管确认客户款项", "ok")
         else:
             flash("登记已保存", "ok")
         return redirect(url_for("records.detail", record_id=record_id))
@@ -440,7 +442,7 @@ def edit(record_id):
                 (now_text(), now_text(), record_id),
             )
             _log(db, record_id, "submit", rec["status"], "pending_payment",
-                 "重新提交，进入待收款，提醒业务员收取客户款项")
+                 "重新提交，进入待收款，提醒资管确认收款")
             notify_next(db, record_id, "submit")
 
         db.commit()
@@ -486,6 +488,9 @@ def detail(record_id):
         # 费用登记：收到款项之后
         "can_fee": can_register_fee(me, rec),
         "can_reject": rec["status"] == "pending_payment" and can_pay,
+        # 开票：收款到账后，由财务（record.invoice）登记
+        "can_invoice": can_register_invoice(me),
+        "invoice_ready": bool(rec["received_amount_cents"]) or rec["status"] == "completed",
         "can_reopen": rec["status"] == "completed" and is_admin,
         # 流转时间轴：仅管理员与财务可见
         "show_logs": is_admin or can_pay,
@@ -580,10 +585,10 @@ def submit(record_id):
         (now_text(), now_text(), record_id),
     )
     _log(db, record_id, "submit", rec["status"], "pending_payment",
-         "提交，进入待收款，提醒业务员收取客户款项")
+         "提交，进入待收款，提醒资管确认收款")
     db.commit()
     notify_next(db, record_id, "submit")
-    flash("已提交，进入待收款：请跟进收取客户款项", "ok")
+    flash("已提交，进入待收款：等待资管确认客户款项", "ok")
     return redirect(url_for("records.detail", record_id=record_id))
 
 
@@ -675,6 +680,44 @@ def _recalc_receipt_state(db, record_id):
     return received, closed, outstanding, rec["status"]
 
 
+# ---------- 开票登记（收款后，财务） ----------
+
+@bp.route("/<int:record_id>/invoice", methods=("POST",))
+@perm_required("record.invoice")
+def invoice_set(record_id):
+    """登记开票。
+
+    分两级：先确认「是否需要开票」，需要开票的才继续跟踪「是否已经开票」；
+    选「不需要开票」时，已开票标记会被清掉，页面上也不再出现「是否已开票」。
+    """
+    rec = get_record_or_404(record_id)
+    back = redirect(url_for("records.detail", record_id=record_id))
+    if not (rec["received_amount_cents"] or rec["status"] == "completed"):
+        flash("收款到账后才能登记开票", "error")
+        return back
+
+    raw = (request.form.get("invoice_needed") or "").strip()
+    if raw not in ("0", "1"):
+        flash("请先选择是否需要开票", "error")
+        return back
+    needed = int(raw)
+    invoiced = 0
+    if needed and request.form.get("is_invoiced") in ("1", "on", "true"):
+        invoiced = 1
+
+    db = get_db()
+    db.execute(
+        "UPDATE records SET invoice_needed = ?, is_invoiced = ?, updated_at = ? WHERE id = ?",
+        (needed, invoiced, now_text(), record_id),
+    )
+    note = ("不需要开票" if not needed
+            else ("需要开票，已开票" if invoiced else "需要开票，待开票"))
+    _log(db, record_id, "invoice", rec["status"], rec["status"], f"开票登记：{note}")
+    db.commit()
+    flash(f"已登记：{note}", "ok")
+    return back
+
+
 @bp.route("/<int:record_id>/receipts", methods=("POST",))
 @login_required
 def receipt_add(record_id):
@@ -737,10 +780,21 @@ def receipt_add(record_id):
         flash("收款已结清" + (f"，待收 {to_yuan_text(outstanding)} 元（按填 0 结清）"
                               if outstanding > 0 else ""), "ok")
     elif closed:
-        flash(f"本次收款已登记，累计收满，业务转为已收齐", "ok")
-        notify_next(db, record_id, "paid")
+        flash("本次收款已登记，累计收满，业务转为已收齐", "ok")
     else:
         flash(f"本次收款已登记，还差 {to_yuan_text(outstanding)} 元", "ok")
+
+    # 每一轮收款确认完之后，回头通知登记这笔业务的业务员；
+    # 未填金额的那一轮（还没收到钱）不通知，避免噪音。
+    if not blank:
+        if closed:
+            notify_next(db, record_id, "paid")
+        else:
+            notify_next(
+                db, record_id, "receipt",
+                f"资管已确认收款 {to_yuan_text(amount_cents)} 元，"
+                f"累计已收 {to_yuan_text(received)} 元，尚待收 {to_yuan_text(outstanding)} 元。",
+            )
     return redirect(url_for("records.detail", record_id=record_id))
 
 

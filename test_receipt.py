@@ -205,9 +205,11 @@ check("部分收款进度 25%（预存0 + 已收30000 / 应收120000）", p2["pe
 # ---------- 9. 待办与列表 ----------
 print("\n=== 9. 待办与列表口径 ===")
 todos = body("/todos/")
-check("待办有「待我收款」", "待我收款" in todos)
+# 待收款这一环归资管，管理员（不是资管）只看到进度，不被当成待办提醒
+check("管理员待办不出现「待我确认收款」", "待我确认收款" not in todos)
+check("管理员待办显示「收款进行中」进度", "收款进行中" in todos)
 check("待办不再有「待我付款」", "待我付款" not in todos)
-check("待办有「去收款」按钮", "去收款" in todos)
+check("进度型待办给「查看」而不是「去收款」", "查看" in todos and "去收款</a>" not in todos)
 
 lst = body("/records/")
 check("列表表头为「待收」", "<th class=\"num\">待收</th>" in lst)
@@ -264,7 +266,9 @@ row = rec(rid3)
 check("业务员无费用登记权限（费用未写入）", row["fee_service_cents"] == 0,
       str(row["fee_service_cents"]))
 todos2 = client2.get("/todos/").get_data(as_text=True)
-check("业务员待办有「待我收款」", "待我收款" in todos2)
+# 业务员在「待收款」阶段不被告知，只在款项到账后从「收款进行中」看到进度
+check("业务员待办不出现「待我确认收款」", "待我确认收款" not in todos2)
+check("业务员待办显示「收款进行中」", "收款进行中" in todos2)
 check("业务员待办没有「待收款跟进」tab", "待收款跟进" not in todos2)
 
 # ---------- 12. 批量提交 ----------
@@ -300,6 +304,132 @@ check("业务员批量提交他人单据被跳过", st3 == "pending_payment" and
 
 lst = body("/records/")
 check("列表有「批量提交收款」按钮", "批量提交收款" in lst)
+
+# ---------- 13. 待收款归资管，业务员不被打扰 ----------
+print("\n=== 13. 待收款归资管（业务员不提醒，到账后回头通知） ===")
+from werkzeug.security import generate_password_hash  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+import notifier  # noqa: E402
+from workflow import is_receipt_staff, receipt_dept_ids  # noqa: E402
+
+with application.app_context():
+    db = get_db()
+    zg_dept = db.execute("SELECT id FROM departments WHERE name = '资管'").fetchone()
+    if zg_dept:
+        zg_dept = zg_dept["id"]
+    else:
+        zg_dept = db.execute(
+            "INSERT INTO departments (name, short_name, sort_order) VALUES ('资管','资管',30)"
+        ).lastrowid
+    for uname, uname_cn, perms, wx in (
+        ("zg1", "资管员甲",
+         '["record.pay","record.view_all","record.create"]', "wx_zg"),
+        ("staff1", "业务员甲", None, "wx_staff"),
+    ):
+        if uname == "zg1":
+            db.execute(
+                """INSERT INTO users (username, password_hash, name, role, permissions,
+                                      is_active, must_change_password, dept_id, wecom_userid)
+                   VALUES (?,?,?,?,?,1,0,?,?)""",
+                (uname, generate_password_hash("Zg@2026"), uname_cn, "finance", perms,
+                 zg_dept, wx),
+            )
+        else:
+            db.execute("UPDATE users SET wecom_userid = ? WHERE username = ?", (wx, uname))
+    db.commit()
+
+client3 = application.test_client()
+client3.post("/login", data={"username": "zg1", "password": "Zg@2026"})
+
+with application.app_context():
+    db = get_db()
+    zg_user = db.execute("SELECT * FROM users WHERE username = 'zg1'").fetchone()
+    staff_user = db.execute("SELECT * FROM users WHERE username = 'staff1'").fetchone()
+    check("收款确认部门取到「资管」", zg_dept in receipt_dept_ids(db), str(receipt_dept_ids(db)))
+    check("资管人员算「确认收款」的人", is_receipt_staff(db, zg_user))
+    check("业务员不算「确认收款」的人", not is_receipt_staff(db, staff_user))
+
+todos3 = client3.get("/todos/").get_data(as_text=True)
+check("资管待办有「待我确认收款」", "待我确认收款" in todos3)
+check("资管能看到别人部门登记的待收款（不受部门限制）", "测试客户A" in todos3 or "收款测试客户" in todos3)
+
+todos2b = client2.get("/todos/").get_data(as_text=True)
+check("业务员待办没有「待我确认收款」", "待我确认收款" not in todos2b)
+
+# 通知对象：提交 → 资管；每一轮收款确认 → 登记该业务的业务员
+sent = []
+with application.app_context():
+    db = get_db()
+    fake_cfg = {"enabled": True, "corp_id": "x", "agent_id": "1", "secret": "s"}
+    with patch.object(notifier, "config", return_value=fake_cfg), \
+         patch.object(notifier, "send_text",
+                      side_effect=lambda db_, ids, content: sent.append((list(ids), content))):
+        notifier.notify_next(db, rid3, "submit")
+        notifier.notify_next(db, rid3, "receipt")
+check("提交后提醒资管（不是业务员自己）",
+      sent and "wx_zg" in sent[0][0] and "wx_staff" not in sent[0][0], str(sent[:1]))
+check("每一轮收款确认后通知业务员",
+      len(sent) > 1 and "wx_staff" in sent[1][0], str(sent[1:2]))
+check("收款通知带金额", len(sent) > 1 and "收款" in sent[1][1], str(sent[1:2]))
+
+# ---------- 14. 开票：收款后由财务做两级确认 ----------
+print("\n=== 14. 开票：收款到账后由财务确认「需不需要 / 是否已开」 ===")
+detail_ok = client.get(f"/records/{rid}").get_data(as_text=True)
+check("收款到账后详情页出现开票卡片", "是否需要开票" in detail_ok)
+check("开票卡片默认待确认", "待确认是否需要开票" in detail_ok)
+
+r = client.post(f"/records/{rid}/invoice", data={"invoice_needed": "0"},
+                follow_redirects=True)
+row = rec(rid)
+check("选「不需要开票」写入 0", row["invoice_needed"] == 0, str(row["invoice_needed"]))
+check("不需要开票时清掉已开票标记", row["is_invoiced"] == 0, str(row["is_invoiced"]))
+check("页面显示「不需要开票」", "不需要开票" in r.get_data(as_text=True))
+
+client.post(f"/records/{rid}/invoice", data={"invoice_needed": "1"}, follow_redirects=True)
+row = rec(rid)
+check("选「需要开票」但未开 → 待开票",
+      row["invoice_needed"] == 1 and row["is_invoiced"] == 0,
+      f"{row['invoice_needed']}/{row['is_invoiced']}")
+check("页面显示「需要开票 · 待开票」",
+      "需要开票 · 待开票" in client.get(f"/records/{rid}").get_data(as_text=True))
+
+client.post(f"/records/{rid}/invoice", data={"invoice_needed": "1", "is_invoiced": "1"},
+            follow_redirects=True)
+row = rec(rid)
+check("需要开票 + 已开票 → is_invoiced=1", row["is_invoiced"] == 1, str(row["is_invoiced"]))
+check("页面显示「已开票」", "已开票" in client.get(f"/records/{rid}").get_data(as_text=True))
+
+# 不需要开票时，即便传了已开票也不记
+client.post(f"/records/{rid}/invoice", data={"invoice_needed": "0", "is_invoiced": "1"},
+            follow_redirects=True)
+row = rec(rid)
+check("选「不需要开票」时不保留已开票",
+      row["invoice_needed"] == 0 and row["is_invoiced"] == 0,
+      f"{row['invoice_needed']}/{row['is_invoiced']}")
+
+# 没收到款之前不给登记
+client.post("/records/new", data=dict(FORM, customer_name="没收款的单", action="save"),
+            follow_redirects=True)
+with application.app_context():
+    rid_nopay = get_db().execute("SELECT MAX(id) m FROM records").fetchone()["m"]
+r = client.post(f"/records/{rid_nopay}/invoice", data={"invoice_needed": "1"},
+                follow_redirects=True)
+row = rec(rid_nopay)
+check("未收到款不能登记开票",
+      row["invoice_needed"] is None and "收款到账后才能登记开票" in r.get_data(as_text=True))
+html_nopay = client.get(f"/records/{rid_nopay}").get_data(as_text=True)
+check("未收款时详情页不出现开票卡片", 'id="invoiceCard"' not in html_nopay)
+check("未收款时登记信息提示收款后再确认", "收款到账后由财务确认" in html_nopay)
+
+# 权限：资管有收款权限但没有开票权限
+r = client3.post(f"/records/{rid}/invoice", data={"invoice_needed": "1"})
+check("无开票权限者被拦（资管也不行）", r.status_code == 302, str(r.status_code))
+check("被拦后状态没被改动", rec(rid)["invoice_needed"] == 0, str(rec(rid)["invoice_needed"]))
+
+# 登记表单里不再有「是否开票」勾选
+r = client.get("/records/new")
+check("登记表单不再有开票勾选框",
+      'name="is_invoiced"' not in r.get_data(as_text=True))
 
 print("\n" + "=" * 50)
 print(f"通过 {passed} 项，失败 {failed} 项")

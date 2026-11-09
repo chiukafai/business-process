@@ -88,7 +88,7 @@
         <button class="btn btn-sm btn-primary" type="submit" id="bulkSubmit" disabled
                 formaction="{{ url_for('records.batch_submit') }}"
                 data-bulk-action="submit"
-                data-confirm-tpl="将选中的 {n} 条业务提交，进入待收款（由业务员跟进收取客户款项），确认？">批量提交收款</button>
+                data-confirm-tpl="将选中的 {n} 条业务提交，进入待收款（由资管确认款项到账），确认？">批量提交收款</button>
         <button class="btn btn-sm btn-danger" type="submit" id="bulkDelete" disabled
                 data-bulk-action="delete"
                 data-confirm-tpl="删除后不可恢复，流程日志与回单附件会一并清除。确认删除选中的 {n} 条业务？">批量删除</button>

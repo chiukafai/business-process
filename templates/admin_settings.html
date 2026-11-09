@@ -6,10 +6,49 @@
 
 <div class="card">
   <div class="card-head">
+    <div class="card-title">流程角色</div>
+    <div style="font-size:12px;color:var(--muted)">决定「待收款」这一环提醒谁、由谁确认款项</div>
+  </div>
+  <form method="post" action="{{ url_for('admin.settings') }}">
+    <input type="hidden" name="section" value="receipt">
+    <div class="card-body">
+      <div class="field">
+        <label>收款确认部门</label>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;padding:6px 0 2px">
+          {% for d in depts %}
+          <label class="check">
+            <input type="checkbox" name="receipt_depts" value="{{ d.id }}"
+                   {% if d.id in chosen_depts %}checked{% endif %}>
+            {{ d.name }}
+          </label>
+          {% endfor %}
+        </div>
+        <span class="hint">
+          这里勾选的部门（资管）负责在「待收款」阶段确认客户款项是否到账。勾选后：
+          业务员不再收到待收款提醒，改由该部门人员收到；该部门每确认一轮收款，系统再回头通知登记这笔业务的业务员。
+          不选时默认取名字含「资管」的部门。
+        </span>
+      </div>
+      <div style="margin-top:14px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:12.5px;color:var(--muted);line-height:1.9">
+        当前会收到「待确认收款」提醒的人：
+        {% for u in receipt_staff %}<b style="color:var(--text)">{{ u.name }}</b>{% if not loop.last %}、{% endif %}{% else %}<b style="color:#b91c1c">暂无</b>（该部门里没有人同时具备「收款登记」权限，请到「人员与权限」补上）{% endfor %}
+        <br>
+        开票登记由具备「开票登记（收款后）」权限的人操作，默认是财务角色，可在「人员与权限」逐个勾选。
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit">保存流程角色</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-head">
     <div class="card-title">企业微信通知（自建应用）</div>
     <div style="font-size:12px;color:var(--muted)">开通后，业务提交 / 被退回 / 付款完成会自动推送到对应人员的企业微信</div>
   </div>
   <form method="post" action="{{ url_for('admin.settings') }}">
+    <input type="hidden" name="section" value="wecom">
     <div class="card-body">
       <div class="form-grid">
         <div class="field full">

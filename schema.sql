@@ -86,7 +86,8 @@ CREATE TABLE IF NOT EXISTS records (
   biz_date             TEXT,                       -- 4 时间
   report_plan_date     TEXT,                       -- 5 报送计划时间
   issue_plan_date      TEXT,                       -- 6 计划出具日期
-  is_invoiced          INTEGER NOT NULL DEFAULT 0, -- 7 是否开票
+  is_invoiced          INTEGER NOT NULL DEFAULT 0, -- 7 是否已开票（需 invoice_needed=1 才有意义）
+  invoice_needed       INTEGER,                    -- 是否需要开票：NULL=待确认 / 0=不需要 / 1=需要
   customer_id          INTEGER REFERENCES customers(id), -- 客户档案
   customer_name        TEXT    NOT NULL,           -- 8 客户名称（快照，导出用）
   upstream_company     TEXT,                       -- 上游公司（供应商，C 列）

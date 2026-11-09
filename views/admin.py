@@ -7,6 +7,7 @@ from werkzeug.security import generate_password_hash
 
 import db as db_module
 import notifier
+import workflow
 from auth import has_perm, login_required, perm_required
 from db import get_db
 from utils import (CUSTOMER_LABEL_SQL, CUSTOMER_SEARCH_SQL, ROLE_LABELS,
@@ -475,6 +476,13 @@ def settings():
     _require_admin()
     db = get_db()
     if request.method == "POST":
+        section = request.form.get("section") or "wecom"
+        if section == "receipt":
+            ids = [x for x in request.form.getlist("receipt_depts") if x.isdigit()]
+            notifier.set_setting(db, workflow.SETTING_KEY, ",".join(ids), g.user["name"])
+            db.commit()
+            flash("收款确认部门已保存", "ok")
+            return redirect(url_for("admin.settings"))
         for key in notifier.SETTING_KEYS:
             if key == "wecom_enabled":
                 set_value = "1" if request.form.get(key) in ("1", "on", "true") else "0"
@@ -490,10 +498,22 @@ def settings():
 
     cfg = notifier.config(db)
     wx_users = db.execute(
-        """SELECT name, username, wecom_userid FROM users
+        """SELECT name, username, wecom_userid, dept_id, role, permissions FROM users
             WHERE is_active = 1 ORDER BY id"""
     ).fetchall()
-    return render_template("admin_settings.html", cfg=cfg, wx_users=wx_users)
+    depts = db.execute(
+        "SELECT id, name FROM departments WHERE is_active = 1 ORDER BY sort_order, id"
+    ).fetchall()
+    raw = notifier.get_setting(db, workflow.SETTING_KEY, "")
+    if (raw or "").strip():
+        chosen_depts = {int(x) for x in raw.replace("，", ",").split(",") if x.strip().isdigit()}
+    else:
+        chosen_depts = workflow.receipt_dept_ids(db)   # 未配置时显示默认（资管）
+    return render_template(
+        "admin_settings.html", cfg=cfg, wx_users=wx_users,
+        depts=depts, chosen_depts=chosen_depts,
+        receipt_staff=workflow.receipt_staff(db),
+    )
 
 
 @bp.route("/settings/test", methods=("POST",))

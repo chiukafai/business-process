@@ -30,7 +30,9 @@
     <div class="stat-label">待我处理</div>
     <div class="stat-value {% if counts.total %}neg{% endif %}">{{ counts.total }} 笔</div>
     <div class="stat-hint">
-      待我收款 {{ counts.receipt }} · 待修改 {{ counts.revise }}
+      {% if counts.receipt %}{{ todo_badge.receipt_label }} {{ counts.receipt }} · {% endif %}
+      {% if counts.receipt_doing %}收款进行中 {{ counts.receipt_doing }} · {% endif %}
+      待修改 {{ counts.revise }}
     </div>
   </div>
 </div>
@@ -40,7 +42,7 @@
   <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <strong style="font-size:14px">你有待处理事项</strong>
     <span style="font-size:13px;color:var(--muted)">
-      {% if counts.receipt %}待你收款 {{ counts.receipt }} 笔{% endif %}
+      {% if counts.receipt %}{{ todo_badge.receipt_label }} {{ counts.receipt }} 笔{% endif %}
       {% if counts.collect %}需跟进收款 {{ counts.collect }} 笔{% endif %}
       {% if counts.revise %}被退回待修改 {{ counts.revise }} 笔{% endif %}
     </span>

@@ -346,7 +346,10 @@ def import_page():
             "biz_date": biz_date,
             "report_plan_date": parse_date(cell("report_plan_date")),
             "issue_plan_date": parse_date(cell("issue_plan_date")),
+            # 「是否开票」现在分两级：Excel 写「是」= 已开票且需要开票；
+            # 其余留空（None）表示还没确认是否需要开票，等财务在详情页登记
             "is_invoiced": 1 if _to_bool(cell("is_invoiced")) else 0,
+            "invoice_needed": 1 if _to_bool(cell("is_invoiced")) else None,
             "customer_name": customer_name,
             "upstream_company": upstream,
             "category": str(cell("category") or "").strip(),
@@ -449,6 +452,7 @@ def import_page():
             "report_plan_date": min(report_dates) if report_dates else None,
             "issue_plan_date": min(issue_dates) if issue_dates else None,
             "is_invoiced": 1 if any(i["is_invoiced"] for i in items) else 0,
+            "invoice_needed": 1 if any(i["is_invoiced"] for i in items) else None,
             "customer_name": customer_name,
             "upstream_company": upstream,
             "biz_amount_cents": total_amount,

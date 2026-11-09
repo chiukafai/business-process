@@ -134,29 +134,17 @@ def send_text(db, userids, content):
 # ---------- 业务触发 ----------
 
 EVENT_TITLE = {
-    "submit": "业务待收款",
+    "submit": "业务待确认收款",
+    "receipt": "收款已确认",
     "reject": "业务被退回",
     "paid": "业务已收齐",
 }
 
 
-def _recipients_for_pay(db, record):
-    """需要付款的人：有付款权限，且能看这笔业务（全部部门 / 同一部门）。"""
-    rows = db.execute(
-        """SELECT name, wecom_userid, permissions, dept_id FROM users
-            WHERE is_active = 1 AND wecom_userid IS NOT NULL AND TRIM(wecom_userid) <> ''"""
-    ).fetchall()
-    out = []
-    for row in rows:
-        try:
-            perms = set(json.loads(row["permissions"] or "[]"))
-        except ValueError:
-            perms = set()
-        if "record.pay" not in perms:
-            continue
-        if "record.view_all" in perms or row["dept_id"] == record["dept_id"]:
-            out.append(row["wecom_userid"])
-    return out
+def _receipt_targets(db):
+    """待收款由「资管」确认，所以提交后提醒资管，而不是登记人自己。"""
+    from workflow import receipt_staff
+    return [r["wecom_userid"] for r in receipt_staff(db) if r["wecom_userid"]]
 
 
 def notify_next(db, record_id, event, extra=""):
@@ -177,10 +165,15 @@ def notify_next(db, record_id, event, extra=""):
             return
 
         if event == "submit":
-            # 提交后下一步是业务员去收客户的钱，所以提醒登记人本人
+            # 待收款 = 资管确认款项，业务员这一步不提醒
+            targets = _receipt_targets(db)
+            tip = (f"业务已提交，待确认收款。应收 {rec['payable_amount_cents'] / 100:,.2f} 元，"
+                   f"请确认客户款项是否到账。")
+        elif event == "receipt":
+            # 资管确认了一轮收款 → 回头告知登记该业务的业务员
             targets = [rec["owner_wx"]] if rec["owner_wx"] else []
-            tip = (f"业务已进入待收款，应收 {rec['payable_amount_cents'] / 100:,.2f} 元，"
-                   f"请跟进收取客户款项。")
+            tip = extra or (f"收款已确认 {rec['received_amount_cents'] / 100:,.2f} 元，"
+                            f"尚待收 {rec['unpaid_amount_cents'] / 100:,.2f} 元。")
         else:
             targets = [rec["owner_wx"]] if rec["owner_wx"] else []
             if event == "reject":
@@ -189,6 +182,8 @@ def notify_next(db, record_id, event, extra=""):
                 tip = (f"款项已收齐，累计已收 {rec['received_amount_cents'] / 100:,.2f} 元，"
                        f"请及时登记费用。")
 
+        if not targets:
+            return
         content = "\n".join([
             f"【{EVENT_TITLE.get(event, '业务提醒')}】",
             f"客户：{rec['customer_name']}",

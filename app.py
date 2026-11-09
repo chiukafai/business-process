@@ -98,7 +98,8 @@ def create_app():
                 from views.todos import todo_counts
                 g.badge_cache = todo_counts(g.user)
             else:
-                g.badge_cache = {"total": 0, "receipt": 0, "collect": 0,
+                g.badge_cache = {"total": 0, "receipt": 0, "receipt_doing": 0,
+                                 "receipt_label": "收款进行中", "collect": 0,
                                  "revise": 0, "mine": 0}
         return g.badge_cache
 
@@ -124,6 +125,7 @@ def create_app():
             "fee_total": utils.fee_total_cents,
             "fee_items": utils.fee_items,
             "status_label": utils.status_label,
+            "invoice_status": utils.invoice_status,
             "money": utils.money,
             "to_yuan_text": utils.to_yuan_text,
             "today_str": utils.today(),

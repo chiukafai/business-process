@@ -45,7 +45,7 @@
           <td>
             <div style="display:flex;gap:6px">
               <a class="btn btn-sm btn-primary" href="{{ url_for('records.detail', record_id=r.id) }}">
-                {% if active_tab in ('receipt', 'collect') %}去收款{% elif active_tab == 'revise' %}去修改{% else %}继续登记{% endif %}
+                {{ meta[active_tab].action_label or '查看' }}
               </a>
             </div>
           </td>

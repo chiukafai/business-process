@@ -251,6 +251,24 @@ def customer_label(row, fallback=""):
     return (fallback or "").strip()
 
 
+# ---------- 开票 ----------
+
+def invoice_status(rec):
+    """开票两级状态：先确认「是否需要开票」，需要才跟踪「是否已开票」。
+
+    返回 {"label": 文案, "tone": ok|warn|muted}，模板直接渲染。
+    """
+    keys = rec.keys() if hasattr(rec, "keys") else rec
+    needed = rec["invoice_needed"] if "invoice_needed" in keys else None
+    if needed is None:
+        return {"label": "待确认是否需要开票", "tone": "muted"}
+    if not needed:
+        return {"label": "不需要开票", "tone": "muted"}
+    if rec["is_invoiced"]:
+        return {"label": "已开票", "tone": "ok"}
+    return {"label": "需要开票 · 待开票", "tone": "warn"}
+
+
 # ---------- 日期 ----------
 def parse_date(value):
     """把各种输入统一成 'YYYY-MM-DD'，无法解析返回 None。"""

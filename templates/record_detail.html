@@ -59,7 +59,7 @@
         {% endif %}
         {% if actions.can_submit %}
         <form method="post" action="{{ url_for('records.submit', record_id=rec.id) }}"
-              data-confirm="提交后进入待收款，由业务员跟进收取客户款项。确认提交？">
+              data-confirm="提交后进入待收款，由资管确认客户款项到账。确认提交？">
           <button class="btn btn-sm btn-primary" type="submit">提交并进入收款</button>
         </form>
         {% elif actions.dept_pending and rec.status in ('draft','rejected') %}
@@ -126,7 +126,10 @@
     <div class="kv"><div class="k">月份</div><div class="v">{{ rec.biz_date | monthlabel or '—' }}</div></div>
     <div class="kv"><div class="k">报送计划时间</div><div class="v">{{ rec.report_plan_date or '—' }}</div></div>
     <div class="kv"><div class="k">计划出具日期</div><div class="v">{{ rec.issue_plan_date or '—' }}</div></div>
-    <div class="kv"><div class="k">是否开票</div><div class="v">{{ '已开票' if rec.is_invoiced else '未开票' }}</div></div>
+    <div class="kv"><div class="k">是否开票</div>
+      <div class="v">{% if actions.invoice_ready %}{{ invoice_status(rec).label }}
+        {% else %}<span style="color:var(--muted-2)">收款到账后由财务确认</span>{% endif %}</div>
+    </div>
     <div class="kv"><div class="k">回单编号</div><div class="v">{{ rec.receipt_no or '—' }}</div></div>
     <div class="kv"><div class="k">收款账户</div><div class="v">{{ rec.receive_account or '—' }}</div></div>
     <div class="kv"><div class="k">收款银行</div><div class="v">{{ rec.receive_bank or '—' }}</div></div>
@@ -243,6 +246,73 @@
   </div>
   {% endif %}
 </div>
+
+<!-- 开票：收款到账后由财务确认「是否需要开票」，需要才继续跟踪「是否已开票」 -->
+{% if actions.invoice_ready %}
+{% set inv = invoice_status(rec) %}
+<div class="card" id="invoiceCard">
+  <div class="card-head">
+    <div class="card-title">开票</div>
+    <span style="font-size:11.5px;color:var(--muted-2)">{{ inv.label }}</span>
+  </div>
+  <div class="card-body">
+    {% if actions.can_invoice %}
+    <form method="post" action="{{ url_for('records.invoice_set', record_id=rec.id) }}" id="invoiceForm">
+      <div style="display:flex;gap:22px;align-items:center;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:600">是否需要开票？</span>
+        <label class="check">
+          <input type="radio" name="invoice_needed" value="0"
+                 {% if rec.invoice_needed == 0 %}checked{% endif %}>
+          不需要开票
+        </label>
+        <label class="check">
+          <input type="radio" name="invoice_needed" value="1"
+                 {% if rec.invoice_needed == 1 %}checked{% endif %}>
+          需要开票
+        </label>
+      </div>
+      <div id="invoicedBox" style="margin-top:12px;padding:10px 12px;background:var(--surface-2);
+                                   border:1px solid var(--border);border-radius:8px;display:none">
+        <label class="check">
+          <input type="checkbox" name="is_invoiced" value="1"
+                 {% if rec.is_invoiced %}checked{% endif %}>
+          已经开票（财务实际开出发票后再勾选）
+        </label>
+      </div>
+      <div class="form-actions" style="border:0;padding:14px 0 0;background:transparent">
+        <button class="btn btn-primary" type="submit">保存开票状态</button>
+        <span style="font-size:11.5px;color:var(--muted-2)">
+          选「不需要开票」时，不会再出现「是否已开票」
+        </span>
+      </div>
+    </form>
+    <script>
+    (function () {
+      var form = document.getElementById('invoiceForm');
+      if (!form) return;
+      var box = document.getElementById('invoicedBox');
+      var cb = form.querySelector('input[name="is_invoiced"]');
+      function sync() {
+        var picked = form.querySelector('input[name="invoice_needed"]:checked');
+        var need = picked && picked.value === '1';
+        box.style.display = need ? 'block' : 'none';
+        if (!need && cb) cb.checked = false;
+      }
+      form.querySelectorAll('input[name="invoice_needed"]').forEach(function (r) {
+        r.addEventListener('change', sync);
+      });
+      sync();
+    })();
+    </script>
+    {% else %}
+    <div style="font-size:13px;color:var(--muted)">
+      当前：<b>{{ inv.label }}</b>
+      <span style="margin-left:10px;font-size:11.5px;color:var(--muted-2)">由财务部人员登记</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
 
 <!-- 费用登记：收到款项后由财务按四项填列 -->
 <div class="card">

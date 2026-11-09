@@ -2,8 +2,8 @@
 import functools
 import json
 
-from flask import (Blueprint, flash, g, redirect, render_template, request,
-                   session, url_for)
+from flask import (Blueprint, flash, g, has_app_context, redirect,
+                   render_template, request, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from db import get_db
@@ -42,12 +42,36 @@ IMPLIED_PERMS = {
 }
 
 
+def user_perms(user):
+    """取某个用户的权限集合。
+
+    当前请求登录人走 g.perms 缓存；判断**别人**的权限（例如「该通知哪些人」）
+    必须按那个人的 permissions 字段算，不能拿当前登录人的权限顶替。
+    """
+    if not user:
+        return set()
+    logged = g.get("user") if has_app_context() else None
+    if logged is not None and logged["id"] == user["id"]:
+        cached = g.get("perms")
+        if cached is not None:
+            return cached
+    try:
+        return set(json.loads(user["permissions"] or "[]"))
+    except (TypeError, ValueError):
+        return set()
+
+
 def has_perm(user, code):
-    if not user or not user["is_active"]:
+    if not user:
         return False
+    try:
+        if not user["is_active"]:
+            return False
+    except (IndexError, KeyError):
+        pass                      # 查询没带 is_active 列时按在职处理
     if user["role"] == "admin":
         return True
-    perms = g.get("perms", set())
+    perms = user_perms(user)
     if code in perms:
         return True
     return any(parent in perms for parent in IMPLIED_PERMS.get(code, ()))

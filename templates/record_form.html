@@ -96,11 +96,9 @@
 
           <div class="field">
             <label>是否开票</label>
-            <label class="check" style="height:36px">
-              <input type="checkbox" name="is_invoiced" value="1"
-                     {% if form.get('is_invoiced') in [1,'1','on','true'] %}checked{% endif %}>
-              已开票
-            </label>
+            <div style="height:36px;display:flex;align-items:center;font-size:12.5px;color:var(--muted-2)">
+              收款到账后由财务登记
+            </div>
           </div>
         </div>
       </div>

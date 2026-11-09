@@ -19,6 +19,7 @@ PERMISSIONS = [
     ("record.view_dept",       "查看本部门全部业务", "查看", ["manager"]),
     ("record.view_all",        "查看全部部门业务",   "查看", ["finance"]),
     ("record.pay",             "收款登记 / 费用登记 / 录回单", "收款", ["finance"]),
+    ("record.invoice",         "开票登记（收款后）",  "收款", ["finance"]),
     ("record.import",          "Excel 导入业务",     "数据", ["staff", "manager"]),
     ("record.export",          "导出 Excel",         "数据", ["manager", "finance"]),
     ("customer.view",          "查看客户档案",       "客户", ["staff", "manager", "finance"]),
@@ -132,6 +133,8 @@ def _migrate(db):
             ("receipt_closed_at", "TEXT"),
             ("fee_registered_at", "TEXT"),
             ("fee_registered_by", "TEXT"),
+            # 开票两级：先确认「是否需要开票」，需要才跟踪「是否已开票」
+            ("invoice_needed", "INTEGER"),
         ],
     }
     for table, cols in add_cols.items():
@@ -268,6 +271,34 @@ def _migrate(db):
                 )
         db.execute(
             "INSERT INTO app_settings (key, value) VALUES ('perm_backfill_v3', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = '1'"
+        )
+
+    # 4.15 历史「已开票」反推「需要开票」：老数据没有这层判断，已开的必然是需要开的
+    db.execute(
+        "UPDATE records SET invoice_needed = 1 "
+        "WHERE is_invoiced = 1 AND invoice_needed IS NULL"
+    )
+
+    # 4.2 一次性回填开票权限：财务默认拥有（「是否开票」改为收款后由财务登记）
+    done4 = db.execute(
+        "SELECT value FROM app_settings WHERE key = 'perm_backfill_v4'"
+    ).fetchone()
+    if not done4:
+        for row in db.execute("SELECT id, role, permissions FROM users").fetchall():
+            if row["role"] != "finance":
+                continue
+            try:
+                codes = json.loads(row["permissions"] or "[]")
+            except ValueError:
+                codes = []
+            if "record.invoice" not in codes:
+                db.execute(
+                    "UPDATE users SET permissions = ? WHERE id = ?",
+                    (json.dumps(codes + ["record.invoice"], ensure_ascii=False), row["id"]),
+                )
+        db.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('perm_backfill_v4', '1') "
             "ON CONFLICT(key) DO UPDATE SET value = '1'"
         )
 
