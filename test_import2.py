@@ -315,6 +315,63 @@ with application.app_context():
         "SELECT fee_type FROM records WHERE customer_name='费用测试客户'").fetchone()["fee_type"]
 check("通道费 → 资金过夜费", fixed == "资金过夜费", str(fixed))
 
+print("\n=== 12. 归属部门按客户档案带出（贸易计划没有部门列） ===")
+from openpyxl import Workbook  # noqa: E402
+
+with application.app_context():
+    db = get_db()
+    row = db.execute("SELECT id FROM departments WHERE name = '市场部'").fetchone()
+    if row:
+        dept_b = row["id"]
+    else:
+        dept_b = db.execute(
+            "INSERT INTO departments (name, short_name, sort_order) VALUES ('市场部','市场',20)"
+        ).lastrowid
+    dept_a = db.execute(
+        "SELECT id FROM departments WHERE name = '集团总部'").fetchone()["id"]
+    db.execute("DELETE FROM records WHERE customer_name IN ('部门测试主体','无部门测试主体')")
+    db.execute("DELETE FROM customers WHERE short_name IN ('部门测试主体','无部门测试主体')")
+    db.execute("INSERT INTO customers (name, short_name, dept_id) VALUES (?,?,?)",
+               ("部门测试主体", "部门测试主体", dept_b))
+    db.execute("INSERT INTO customers (name, short_name) VALUES (?,?)",
+               ("无部门测试主体", "无部门测试主体"))
+    db.commit()
+
+wb = Workbook()
+ws = wb.active
+ws.append(["大类", "品种", "上游公司", "数量", "单价", "金额", "主体公司"])
+ws.append(["豆菜", "豆角", "沃田农艺园", 100, 10, 1000, "部门测试主体"])
+ws.append(["豆菜", "生菜", "沃田农艺园", 100, 10, 2000, "无部门测试主体"])
+buf = io.BytesIO()
+wb.save(buf)
+buf.seek(0)
+# 故意用「集团总部」当兜底部门，且导入人也是集团总部：
+# 档案挂了市场部的主体公司，必须跟着档案走，不能被导入人带偏
+resp = client.post("/excel/import",
+                   data={"file": (buf, "部门归属测试.xlsx"), "default_dept": str(dept_a)},
+                   content_type="multipart/form-data", follow_redirects=True)
+body = resp.get_data(as_text=True)
+
+with application.app_context():
+    db = get_db()
+    got_b = db.execute(
+        "SELECT dept_id FROM records WHERE customer_name = '部门测试主体'").fetchone()
+    got_a = db.execute(
+        "SELECT dept_id FROM records WHERE customer_name = '无部门测试主体'").fetchone()
+check("档案有归属部门 → 按档案归属（不是导入人的部门）",
+      bool(got_b) and got_b["dept_id"] == dept_b,
+      f"期望 {dept_b}，实际 {got_b['dept_id'] if got_b else None}")
+check("档案没归属部门 → 退回页面兜底部门",
+      bool(got_a) and got_a["dept_id"] == dept_a,
+      f"期望 {dept_a}，实际 {got_a['dept_id'] if got_a else None}")
+check("结果页说明按客户档案带出部门", "按客户档案" in body)
+check("结果页提示档案缺部门", "没有归属部门" in body)
+with application.app_context():
+    db = get_db()
+    created = db.execute(
+        "SELECT dept_id FROM customers WHERE short_name = '部门测试主体'").fetchone()
+check("已有档案的部门不被导入覆盖", created["dept_id"] == dept_b, str(created["dept_id"]))
+
 print(f"\n{'=' * 46}")
 print(f"通过 {passed} 项，失败 {failed} 项")
 if failed:

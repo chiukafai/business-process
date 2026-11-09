@@ -151,7 +151,7 @@
 
       <div style="margin-top:16px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
         <div class="field" style="margin:0;min-width:220px">
-          <label>表格里没有「归属部门」列时，导入到</label>
+          <label>兜底部门（档案里没挂部门的才用它）</label>
           <select name="default_dept">
             {% for d in depts %}
             <option value="{{ d.id }}" {% if default_dept == d.id %}selected{% endif %}>{{ d.name }}</option>
@@ -159,7 +159,7 @@
           </select>
         </div>
         <div style="font-size:12px;color:var(--muted-2);padding-bottom:9px">
-          表格里如果写了「归属部门」列，以表格为准
+          表格里写了「归属部门」→ 以表格为准；没写 → 按客户档案里该主体公司的归属部门；档案没挂部门才用这里选的兜底部门
         </div>
       </div>
 
@@ -173,7 +173,7 @@
         5. 时间按月份读：「月份」「时间」列写 2026-11、2026年11月、2026-11-05 都可以；没有该列则落为当前月<br>
         6. 「公司实收」「辅助核算费用」「待收金额」由系统按口径重算，Excel 里的值仅用于核对<br>
         7. 含合计 / 汇总 / 小计公式的行会自动跳过，不会当成业务导入<br>
-        8. 表格没有「归属部门」列时，记录归入上方所选的默认部门；表里有该列则以表格为准<br>
+        8. 归属部门优先级：表格「归属部门」列 → 客户档案里该主体公司的归属部门 → 上方选的兜底部门（贸易计划模板没有部门列，所以按客户档案自动带出，跟谁导入无关）<br>
         9. 导入的记录一律为「草稿」，核对无误后提交即进入「待收款」，由业务员跟进收取客户款项<br>
         10. 主体公司若在客户档案里不存在，会自动建档（同时写入客户名称与主体公司）
       </div>

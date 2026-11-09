@@ -231,7 +231,23 @@ def import_page():
     # 汇总行（SUBTOTAL/SUM）直接跳过，不当作业务数据
     formula_rows = _formula_rows(wb_formula.active)
 
-    dept_by_name = {r["name"]: r["id"] for r in db.execute("SELECT id, name FROM departments")}
+    _dept_rows = db.execute("SELECT id, name FROM departments").fetchall()
+    dept_by_name = {r["name"]: r["id"] for r in _dept_rows}
+    dept_by_id = {r["id"]: r["name"] for r in _dept_rows}
+
+    # 客户档案：主体公司 → 归属部门。贸易计划里没有部门列，
+    # 这时按档案里这个主体公司挂的归属部门走，档案没挂才退回页面选的默认部门。
+    cust_by_entity, cust_by_name = {}, {}
+    for c in db.execute("SELECT id, name, short_name, dept_id FROM customers"):
+        entity = (c["short_name"] or "").strip()
+        if entity:
+            cust_by_entity[entity] = c          # 主体公司优先
+        name_key = (c["name"] or "").strip()
+        if name_key:
+            cust_by_name.setdefault(name_key, c)   # 客户名称兜底
+
+    def _master_customer(name):
+        return cust_by_entity.get(name) or cust_by_name.get(name)
 
     # 表格里没有「归属部门」列时（贸易计划模板就是这种），用页面上选的默认部门
     try:
@@ -246,6 +262,8 @@ def import_page():
 
     bad_rows, warned, skipped_rows = [], [], []
     renamed = {}          # 原名 → 清理后的名称，供结果页说明
+    dept_from_master = {}  # 主体公司 → 档案里的部门名（按档案归属的）
+    dept_fallback = {}     # 主体公司 → 行号（档案没挂部门，用了默认部门）
     # 同一「主体公司 + 归属部门 + 月份」的明细行先归堆，最后合成一条业务
     buckets, bucket_order = {}, []
 
@@ -293,8 +311,10 @@ def import_page():
         prepaid = to_cents(cell("prepaid_amount")) or 0
         received = to_cents(cell("received_amount")) or 0
 
-        # 部门：表格里写了就按表格，没写就用页面上选的默认部门
+        # 部门优先级：表格里写了 → 按表格；没写 → 按客户档案里该主体公司的归属部门；
+        # 档案也没挂 → 才用页面选的默认部门（即导入人的部门），并在结果页说明。
         dept_name = str(cell("dept_name") or "").strip()
+        master = _master_customer(customer_name)
         if dept_name:
             if has_perm(g.user, "record.create_any_dept"):
                 dept_id = dept_by_name.get(dept_name)
@@ -305,7 +325,13 @@ def import_page():
             else:
                 dept_id = g.user["dept_id"]
         else:
-            dept_id = default_dept_id
+            master_dept_id = master["dept_id"] if master else None
+            if master_dept_id:
+                dept_id = master_dept_id
+                dept_from_master[customer_name] = dept_by_id.get(master_dept_id, "—")
+            else:
+                dept_id = default_dept_id
+                dept_fallback.setdefault(customer_name, offset)
         if not dept_id:
             bad_rows.append({"row": offset, "customer": customer_name,
                              "reason": "没有可用的归属部门：请在页面上选一个默认部门，"
@@ -481,10 +507,12 @@ def import_page():
                 item["customer_id"] = row["id"]
                 item["customer_name"] = customer_label(row, name)
             else:
+                # 新客户：客户名称与主体公司同时写入，并挂上这次导入的部门，
+                # 下次再导同一个主体公司就能自动带出归属部门
                 cur = db.execute(
-                    "INSERT INTO customers (name, short_name, created_by, created_at, updated_at) "
-                    "VALUES (?,?,?,?,?)",
-                    (name, name, g.user["name"], now_text(), now_text()),
+                    "INSERT INTO customers (name, short_name, dept_id, created_by, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (name, name, default_dept_id, g.user["name"], now_text(), now_text()),
                 )
                 item["customer_id"] = cur.lastrowid
 
@@ -515,7 +543,15 @@ def import_page():
     if "fee_rate" not in col_map:
         notes.append("文件里没有「费率」列，公司实收按 0 计算，导入后可在详情页逐条补录")
     if "dept_name" not in col_map:
-        notes.append("文件里没有「归属部门」列，记录全部归入你所属部门")
+        if dept_from_master:
+            pairs = "、".join(f"{k}→{v}" for k, v in list(dept_from_master.items())[:8])
+            more = f" 等 {len(dept_from_master)} 家" if len(dept_from_master) > 8 else ""
+            notes.append(f"归属部门按客户档案里该主体公司的归属自动带出：{pairs}{more}")
+        if dept_fallback:
+            names = "、".join(list(dept_fallback.keys())[:8])
+            more = f" 等 {len(dept_fallback)} 家" if len(dept_fallback) > 8 else ""
+            notes.append(f"以下主体公司在客户档案里没有归属部门，已按你选的默认部门归入："
+                         f"{names}{more}。建议先去「客户档案」补上部门，下次导入就自动带出")
     if "biz_date" not in col_map:
         notes.append("文件里没有「月份」或「时间」列，记录落为当前月份")
     if "upstream_company" not in col_map:
