@@ -246,10 +246,12 @@ table.tbl td {
 table.tbl tbody tr:hover { background: #fbfcfe; }
 table.tbl tbody tr.clickable { cursor: pointer; }
 table.tbl tbody tr.clickable:hover { background: var(--brand-50); }
-.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-/* 数字列表头跟随右对齐：table.tbl th 的 text-align:left 特异性更高，必须显式覆盖，
-   否则表头贴左、数字贴右，同列出现两条边线 */
-table.tbl th.num { text-align: right; }
+/* 全表统一左对齐（含金额列）：
+   1) 表头与数据同一基准线，不出现「表头贴左、数字贴右」的同列双基线；
+   2) 文字列与金额列同为左对齐，整个表格只有一条对齐规则；
+   3) tabular-nums 保证等宽数字，千分位仍在同一竖列上对齐；
+   4) nowrap 防止金额被折行撑高行高。 */
+.num { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .neg { color: var(--danger); font-weight: 600; }
 .cust { font-weight: 550; color: var(--text); }
 
