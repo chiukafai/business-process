@@ -86,7 +86,7 @@ def main():
     check("4 行有效数据入库", count == 4, f"实际 {count} 行")
     check("缺主体公司的行被拒", "主体公司为空" in body)
     check("金额为 0 的行被拒", "业务金额为空或不大于 0" in body)
-    check("导入后为草稿状态", "均为「草稿」" in body or "草稿" in body)
+    check("导入后为报批中状态", "报批中" in body)
 
     print("\n=== 2. 导入后的金额口径 ===")
     with application.app_context():

@@ -6,7 +6,8 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 # ---------- 状态 ----------
 
 STATUS_META = {
-    "draft":            {"label": "草稿",   "color": "#64748b", "bg": "#f1f5f9"},
+    # 语义：登记/导入后的初始态，等待确认归属部门并报批
+    "draft":            {"label": "报批中", "color": "#0369a1", "bg": "#e0f2fe"},
     # 状态码沿用 pending_payment（避免 SQLite 改 CHECK 要重建表），语义已是「待收款」
     "pending_payment":  {"label": "待收款", "color": "#7c3aed", "bg": "#ede9fe"},
     "completed":        {"label": "已收齐", "color": "#15803d", "bg": "#dcfce7"},

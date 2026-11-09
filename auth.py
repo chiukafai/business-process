@@ -83,7 +83,7 @@ def can_view_record(user, rec):
 
 
 def can_delete_record(user, rec):
-    """能否删除某条业务：有删除权限可删任意记录；本人只能删自己的草稿。"""
+    """能否删除某条业务：有删除权限可删任意记录；本人只能删自己的报批中单据。"""
     if not user:
         return False
     if has_perm(user, "record.delete"):

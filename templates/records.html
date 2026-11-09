@@ -111,7 +111,7 @@
       <tbody>
         {% for r in rows %}
         {% set del_ok = can_delete_record(current_user, r) %}
-        {% set can_submit_row = r.owner_id == current_user.id and r.status in ('draft','rejected') %}
+        {% set can_submit_row = r.owner_id == current_user.id and r.status in ('draft','rejected') and r.dept_id %}
         <tr class="clickable" data-href="{{ url_for('records.detail', record_id=r.id) }}">
           <td class="ck-cell">
             <input type="checkbox" class="row-check" form="batchForm" name="ids" value="{{ r.id }}"
@@ -122,7 +122,9 @@
           <td class="cust">{{ r.customer_label or r.customer_name }}</td>
           <td style="color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
               title="{{ r.upstream_company or '' }}">{{ r.upstream_company or '—' }}</td>
-          <td>{{ r.dept_name or '' }}</td>
+          <td>{% if r.dept_name %}{{ r.dept_name }}{% else %}
+            <span style="color:#c2410c;font-size:12px" title="客户档案里没挂部门，需确认后才能提交收款">待确认</span>
+          {% endif %}</td>
           <td>{{ r.biz_type or '' }}</td>
           <td style="white-space:nowrap">{{ r.biz_date | monthlabel }}</td>
           <td class="num">{{ money(r.biz_amount_cents) }}</td>
@@ -141,7 +143,7 @@
             </form>
             {% else %}
             <button class="btn btn-sm" type="button" disabled
-                    title="仅登记人可删除自己的草稿，其他人需要「删除业务」权限">删除</button>
+                    title="仅登记人可删除自己的报批中单据，其他人需要「删除业务」权限">删除</button>
             {% endif %}
           </td>
         </tr>
@@ -154,7 +156,7 @@
   <div class="rec-cards" style="padding:12px">
     {% for r in rows %}
     {% set del_ok = can_delete_record(current_user, r) %}
-    {% set can_submit_row = r.owner_id == current_user.id and r.status in ('draft','rejected') %}
+    {% set can_submit_row = r.owner_id == current_user.id and r.status in ('draft','rejected') and r.dept_id %}
     <div class="rec-card-item">
       <div class="rc-select">
         <input type="checkbox" class="row-check" form="batchForm" name="ids" value="{{ r.id }}"
@@ -172,7 +174,7 @@
           <div><label>待收</label><b class="{% if r.unpaid_amount_cents < 0 %}neg{% endif %}">{{ money(r.unpaid_amount_cents) }}</b></div>
         </div>
         <div class="rc-bottom">
-          {{ r.dept_name or '' }}{% if r.upstream_company %} · 上游 {{ r.upstream_company }}{% endif %}{% if r.biz_type %} · {{ r.biz_type }}{% endif %} · {{ r.biz_date | monthlabel }} · {{ r.owner_name or '' }}
+          {% if r.dept_name %}{{ r.dept_name }}{% else %}<b style="color:#c2410c">部门待确认</b>{% endif %}{% if r.upstream_company %} · 上游 {{ r.upstream_company }}{% endif %}{% if r.biz_type %} · {{ r.biz_type }}{% endif %} · {{ r.biz_date | monthlabel }} · {{ r.owner_name or '' }}
         </div>
       </a>
       {% if del_ok %}

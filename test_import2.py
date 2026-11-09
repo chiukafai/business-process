@@ -345,8 +345,9 @@ ws.append(["豆菜", "生菜", "沃田农艺园", 100, 10, 2000, "无部门测�
 buf = io.BytesIO()
 wb.save(buf)
 buf.seek(0)
-# 故意用「集团总部」当兜底部门，且导入人也是集团总部：
-# 档案挂了市场部的主体公司，必须跟着档案走，不能被导入人带偏
+# 故意用「集团总部」当兜底部门、且导入人也是集团总部：
+# 档案挂了市场部的主体公司必须跟着档案走；档案没挂部门的一律留空待确认，
+# 绝不能按导入人的部门兜底。
 resp = client.post("/excel/import",
                    data={"file": (buf, "部门归属测试.xlsx"), "default_dept": str(dept_a)},
                    content_type="multipart/form-data", follow_redirects=True)
@@ -355,17 +356,66 @@ body = resp.get_data(as_text=True)
 with application.app_context():
     db = get_db()
     got_b = db.execute(
-        "SELECT dept_id FROM records WHERE customer_name = '部门测试主体'").fetchone()
+        "SELECT id, dept_id, status FROM records WHERE customer_name = '部门测试主体'").fetchone()
     got_a = db.execute(
-        "SELECT dept_id FROM records WHERE customer_name = '无部门测试主体'").fetchone()
+        "SELECT id, dept_id, status FROM records WHERE customer_name = '无部门测试主体'").fetchone()
 check("档案有归属部门 → 按档案归属（不是导入人的部门）",
       bool(got_b) and got_b["dept_id"] == dept_b,
       f"期望 {dept_b}，实际 {got_b['dept_id'] if got_b else None}")
-check("档案没归属部门 → 退回页面兜底部门",
-      bool(got_a) and got_a["dept_id"] == dept_a,
-      f"期望 {dept_a}，实际 {got_a['dept_id'] if got_a else None}")
+check("档案没归属部门 → 归属部门留空（不按导入人兜底）",
+      bool(got_a) and got_a["dept_id"] is None,
+      f"期望 None，实际 {got_a['dept_id'] if got_a else None}")
 check("结果页说明按客户档案带出部门", "按客户档案" in body)
-check("结果页提示档案缺部门", "没有归属部门" in body)
+check("结果页提示归属部门待确认", "归属部门待确认" in body)
+check("导入落库状态为报批中", bool(got_a) and got_a["status"] == "draft",
+      got_a["status"] if got_a else None)
+check("导入结果页用「报批中」措辞", "报批中" in body)
+
+# 部门没确认时不允许提交进入收款
+rid_pending = got_a["id"]
+r = client.post(f"/records/{rid_pending}/submit", follow_redirects=True)
+body = r.get_data(as_text=True)
+with application.app_context():
+    db = get_db()
+    st = db.execute("SELECT status, dept_id FROM records WHERE id = ?",
+                    (rid_pending,)).fetchone()
+check("部门未确认 → 提交被拦", st["status"] == "draft", st["status"])
+check("提交被拦时给出提示", "请先确认归属部门" in body)
+
+# 批量提交也要跳过无部门的
+r = client.post("/records/batch-submit", data={"ids": str(rid_pending)},
+                follow_redirects=True)
+body = r.get_data(as_text=True)
+with application.app_context():
+    db = get_db()
+    st = db.execute("SELECT status FROM records WHERE id = ?", (rid_pending,)).fetchone()
+check("部门未确认 → 批量提交同样被跳过", st["status"] == "draft", st["status"])
+check("批量提交说明跳过原因", "归属部门未确认" in body or "还没确认归属部门" in body)
+
+# 详情页可见「归属部门待确认」卡片
+r = client.get(f"/records/{rid_pending}")
+check("详情页出现确认部门入口", "归属部门待确认" in r.get_data(as_text=True))
+
+# 确认部门 → 单据可提交，且客户档案被回填
+r = client.post(f"/records/{rid_pending}/dept", data={"dept_id": str(dept_a)},
+                follow_redirects=True)
+body = r.get_data(as_text=True)
+with application.app_context():
+    db = get_db()
+    rec = db.execute("SELECT dept_id, status FROM records WHERE id = ?",
+                     (rid_pending,)).fetchone()
+    cu = db.execute("SELECT dept_id FROM customers WHERE short_name = '无部门测试主体'").fetchone()
+check("确认部门后单据带上部门", rec["dept_id"] == dept_a, str(rec["dept_id"]))
+check("确认部门时回填客户档案", cu["dept_id"] == dept_a, str(cu["dept_id"]))
+check("确认成功有提示", "归属部门已确认" in body)
+
+# 确认后可以正常提交
+client.post(f"/records/{rid_pending}/submit", follow_redirects=True)
+with application.app_context():
+    db = get_db()
+    st = db.execute("SELECT status FROM records WHERE id = ?", (rid_pending,)).fetchone()
+check("部门确认后可提交进入收款", st["status"] == "pending_payment", st["status"])
+
 with application.app_context():
     db = get_db()
     created = db.execute(

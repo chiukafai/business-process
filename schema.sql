@@ -75,7 +75,9 @@ CREATE TABLE IF NOT EXISTS records (
                        CHECK (status IN ('draft','pending_payment','completed','rejected')),
   owner_id             INTEGER NOT NULL REFERENCES users(id),
   owner_name           TEXT,
-  dept_id              INTEGER NOT NULL REFERENCES departments(id),
+  -- 归属部门：导入时若客户档案里该主体公司没挂部门，先留空（待确认），
+  -- 确认后才能提交进入收款 —— 所以这里不能用 NOT NULL
+  dept_id              INTEGER REFERENCES departments(id),
 
   -- 模板 26 列（第 1 列「序号」= id）
   biz_type             TEXT,                       -- 2 类型

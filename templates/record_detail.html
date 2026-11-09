@@ -8,6 +8,36 @@
 
 {% block content %}
 
+{% if actions.dept_pending %}
+<div class="card" style="border-color:#fdba74;background:#fff7ed">
+  <div class="card-body">
+    <div class="card-title" style="color:#c2410c;margin-bottom:6px">归属部门待确认</div>
+    <div style="font-size:13px;color:#9a3412;line-height:1.8;margin-bottom:12px">
+      这笔业务导入时，客户档案里「{{ rec.customer_label or rec.customer_name }}」还没登记归属部门，
+      按规则先留空，<b>不按导入人的部门归属</b>。选好归属部门后才能提交进入收款。
+    </div>
+    {% if dept_options %}
+    <form method="post" action="{{ url_for('records.set_dept', record_id=rec.id) }}"
+          style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"
+          data-confirm="确认后归属部门将锁定，并同步写入客户档案。确认？">
+      <select name="dept_id" required style="min-width:200px">
+        <option value="">— 请选择归属部门 —</option>
+        {% for d in dept_options %}
+        <option value="{{ d.id }}">{{ d.name }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-primary" type="submit">确认归属部门</button>
+      <span style="font-size:12px;color:#9a3412">确认后会自动写入客户档案，下次导入自动带出</span>
+    </form>
+    {% else %}
+    <div class="flash flash-error" style="margin:0">
+      你的账号没有可选的部门，请联系管理员分配部门后再确认。
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-body">
     <div class="detail-head">
@@ -15,7 +45,9 @@
         <div class="detail-title">{{ rec.customer_label or rec.customer_name }}</div>
         <div class="detail-sub">
           <span class="tag tag-{{ rec.status }}">{{ status_label(rec.status) }}</span>
-          <span style="margin-left:8px">{{ rec.dept_name or '' }}</span>
+          <span style="margin-left:8px">
+            {% if rec.dept_name %}{{ rec.dept_name }}{% else %}<b style="color:#c2410c">部门待确认</b>{% endif %}
+          </span>
           {% if rec.biz_type %}<span> · {{ rec.biz_type }}</span>{% endif %}
           <span> · {{ rec.biz_date | monthlabel }}</span>
           <span> · 登记人 {{ rec.owner_name or '' }}</span>
@@ -30,10 +62,13 @@
               data-confirm="提交后进入待收款，由业务员跟进收取客户款项。确认提交？">
           <button class="btn btn-sm btn-primary" type="submit">提交并进入收款</button>
         </form>
+        {% elif actions.dept_pending and rec.status in ('draft','rejected') %}
+        <button class="btn btn-sm" type="button" disabled
+                title="归属部门未确认，先在上方选好部门才能提交">提交并进入收款</button>
         {% endif %}
         {% if actions.can_withdraw %}
         <form method="post" action="{{ url_for('records.withdraw', record_id=rec.id) }}"
-              data-confirm="撤回后回到草稿，待收款清单里会消失。确认撤回？">
+              data-confirm="撤回后回到报批中，待收款清单里会消失。确认撤回？">
           <button class="btn btn-sm" type="submit">撤回修改</button>
         </form>
         {% endif %}
@@ -82,7 +117,9 @@
 <div class="card">
   <div class="card-head"><div class="card-title">登记信息</div></div>
   <div class="kv-grid">
-    <div class="kv"><div class="k">归属部门</div><div class="v">{{ rec.dept_name or '—' }}</div></div>
+    <div class="kv"><div class="k">归属部门</div>
+      <div class="v">{% if rec.dept_name %}{{ rec.dept_name }}{% else %}<b style="color:#c2410c">待确认</b>{% endif %}</div>
+    </div>
     <div class="kv"><div class="k">上游公司</div><div class="v">{{ rec.upstream_company or '—' }}</div></div>
     <div class="kv"><div class="k">类型</div><div class="v">{{ rec.biz_type or '—' }}</div></div>
     <div class="kv"><div class="k">预存与否</div><div class="v">{{ rec.prepaid_mode or '—' }}</div></div>

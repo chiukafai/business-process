@@ -1,6 +1,7 @@
 """数据库连接、初始化与种子数据。"""
 import json
 import os
+import re
 import sqlite3
 
 import click
@@ -54,6 +55,59 @@ def _columns(db, table):
     return {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
 
 
+def _records_dept_nullable(db):
+    """把 records.dept_id 的 NOT NULL 放开（SQLite 改约束只能重建表）。
+
+    背景：导入贸易计划时，若客户档案里这家主体公司还没挂归属部门，业务先留空
+    （待确认），确认后才能提交进入收款 —— 所以 dept_id 必须允许 NULL。
+    重建表会保留全部列、自增 id 与数据，索引重建在函数末尾补回。
+    """
+    info = db.execute("PRAGMA table_info(records)").fetchall()
+    col = next((r for r in info if r["name"] == "dept_id"), None)
+    if col is None or not col["notnull"]:
+        return                                  # 新库/已迁移过，直接跳过
+
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'records'"
+    ).fetchone()
+    ddl = (row["sql"] if row else "") or ""
+    new_ddl, replaced = re.subn(r"(dept_id\s+INTEGER)\s+NOT NULL", r"\1", ddl, count=1)
+    if not replaced:
+        return
+    new_ddl = re.sub(r"^CREATE TABLE\s+(IF NOT EXISTS\s+)?[\"\'`]?records[\"\'`]?",
+                     "CREATE TABLE records__new", new_ddl, count=1, flags=re.IGNORECASE)
+
+    cols = ", ".join(f'"{r["name"]}"' for r in info)
+    db.commit()                                 # PRAGMA 在事务里无效，先落盘
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("PRAGMA legacy_alter_table = ON")
+    try:
+        db.execute(new_ddl)
+        db.execute(f"INSERT INTO records__new ({cols}) SELECT {cols} FROM records")
+        db.execute("DROP TABLE records")
+        db.execute("ALTER TABLE records__new RENAME TO records")
+        try:
+            db.execute(
+                "UPDATE sqlite_sequence SET name = 'records' WHERE name = 'records__new'"
+            )
+        except sqlite3.OperationalError:
+            pass                                # 没有自增序列记录时忽略
+        # DROP TABLE 会把索引一并删掉，全部补回
+        for idx in (
+            "CREATE INDEX IF NOT EXISTS idx_records_status   ON records(status, dept_id)",
+            "CREATE INDEX IF NOT EXISTS idx_records_owner    ON records(owner_id, updated_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_records_bizdate  ON records(biz_date DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_records_customer ON records(customer_name)",
+            "CREATE INDEX IF NOT EXISTS idx_records_receipt  ON records(receipt_no)",
+            "CREATE INDEX IF NOT EXISTS idx_records_cust_id  ON records(customer_id)",
+        ):
+            db.execute(idx)
+        db.commit()
+    finally:
+        db.execute("PRAGMA legacy_alter_table = OFF")
+        db.execute("PRAGMA foreign_keys = ON")
+
+
 def _migrate(db):
     """把旧库升级到当前结构，可重复执行。"""
     # 1. 补齐新增列
@@ -85,6 +139,9 @@ def _migrate(db):
         for name, ddl in cols:
             if name not in have:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+    # 老库把 records.dept_id 的 NOT NULL 放开（归属部门允许留空 = 待确认）
+    _records_dept_nullable(db)
 
     # 老库补完列之后再建依赖该列的索引
     db.execute("CREATE INDEX IF NOT EXISTS idx_records_cust_id ON records(customer_id)")

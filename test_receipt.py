@@ -268,7 +268,7 @@ check("业务员待办有「待我收款」", "待我收款" in todos2)
 check("业务员待办没有「待收款跟进」tab", "待收款跟进" not in todos2)
 
 # ---------- 12. 批量提交 ----------
-print("\n=== 12. 批量提交草稿进待收款 ===")
+print("\n=== 12. 批量提交报批中单据进待收款 ===")
 draft_ids = []
 for nm in ("批量客户甲", "批量客户乙"):
     client.post("/records/new", data=dict(FORM, customer_name=nm, action="save"),
@@ -280,7 +280,7 @@ for nm in ("批量客户甲", "批量客户乙"):
 with application.app_context():
     st = [get_db().execute("SELECT status FROM records WHERE id = ?", (i,)).fetchone()["status"]
           for i in draft_ids]
-check("保存草稿不进收款", st == ["draft", "draft"], str(st))
+check("暂存不进收款", st == ["draft", "draft"], str(st))
 
 r = client.post("/records/batch-submit", data={"ids": [str(i) for i in draft_ids]},
                 follow_redirects=True)

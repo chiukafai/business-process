@@ -209,7 +209,7 @@ def proceed(application, client, depts):
         db = get_db()
         rid_b_status = db.execute("SELECT status FROM records WHERE id = ?",
                                   (rid_b,)).fetchone()["status"]
-    check("撤回后回到草稿", rid_b_status == "draft", rid_b_status)
+    check("撤回后回到报批中", rid_b_status == "draft", rid_b_status)
 
     print("\n=== 8. 财务退回必须填原因 ===")
     r = client.post(f"/records/{rid_b}/submit", follow_redirects=True)

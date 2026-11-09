@@ -15,7 +15,7 @@ TODO_META = {
     "receipt": {"label": "待我收款", "hint": "已提交、款项还没收齐，去跟进客户回款"},
     "collect": {"label": "待收款跟进", "hint": "本部门还没收齐的业务，可协助登记收款"},
     "revise":  {"label": "待我修改", "hint": "被退回，需要你修改后重新提交"},
-    "mine":    {"label": "我的草稿", "hint": "还没提交的业务"},
+    "mine":    {"label": "我的报批中", "hint": "还没提交、或待确认归属部门的业务"},
 }
 
 TAB_ORDER = ("receipt", "collect", "revise", "mine")

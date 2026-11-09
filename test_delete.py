@@ -132,14 +132,14 @@ def main():
     login_as(client, "m1")
     r = client.post(f"/records/{record_id}/delete", follow_redirects=True)
     body = r.get_data(as_text=True)
-    check("无删除权限的人删不了别人已提交的业务", "只有自己的草稿可以删除" in body)
+    check("无删除权限的人删不了别人已提交的业务", "只有自己的报批中单据可以删除" in body)
     with application.app_context():
         still = get_db().execute("SELECT 1 FROM records WHERE id = ?", (record_id,)).fetchone()
     check("记录仍在（未被误删）", still is not None)
 
     login_as(client, "s1")
     r = client.post(f"/records/{record_id}/delete", follow_redirects=True)
-    check("本人也删不了已提交的业务", "只有自己的草稿可以删除" in r.get_data(as_text=True))
+    check("本人也删不了已提交的业务", "只有自己的报批中单据可以删除" in r.get_data(as_text=True))
 
     print("\n=== 3. 引用保护 ===")
     client.get("/logout")

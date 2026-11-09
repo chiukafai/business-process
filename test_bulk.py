@@ -117,7 +117,7 @@ def main():
     check("无删除权限且非本人待提交的单据，复选框禁用（此处均为已提交）",
           body_s.count('disabled title="这条业务你没有可批量操作的权限"') == 4,
           f"{body_s.count('disabled title=')} 处禁用")
-    check("删除按钮置灰但可见", "仅登记人可删除自己的草稿，其他人需要「删除业务」权限" in body_s)
+    check("删除按钮置灰但可见", "仅登记人可删除自己的报批中单据，其他人需要「删除业务」权限" in body_s)
 
     print("\n=== 4. 批量删除 ===")
     login_as(client, "m1")

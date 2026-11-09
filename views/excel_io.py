@@ -176,8 +176,7 @@ def import_page():
     ).fetchall()
 
     if request.method == "GET":
-        return render_template("import.html", result=None, depts=depts,
-                               default_dept=g.user["dept_id"] or (depts[0]["id"] if depts else None))
+        return render_template("import.html", result=None, depts=depts)
 
     file = request.files.get("file")
     if not file or not file.filename:
@@ -249,21 +248,13 @@ def import_page():
     def _master_customer(name):
         return cust_by_entity.get(name) or cust_by_name.get(name)
 
-    # 表格里没有「归属部门」列时（贸易计划模板就是这种），用页面上选的默认部门
-    try:
-        default_dept_id = int(request.form.get("default_dept") or 0) or None
-    except (TypeError, ValueError):
-        default_dept_id = None
-    if (default_dept_id and not has_perm(g.user, "record.create_any_dept")
-            and default_dept_id != g.user["dept_id"]):
-        default_dept_id = g.user["dept_id"]      # 无跨部门权限者只能导到自己部门
-    if not default_dept_id:
-        default_dept_id = g.user["dept_id"] or (depts[0]["id"] if depts else None)
-
+    # 表格里没有「归属部门」列时（贸易计划模板就是这种），**只认客户档案**：
+    # 档案里这家主体公司挂了部门 → 用它；没挂 → 归属部门留空（待确认），
+    # 不按导入人的部门归属，避免把别人的业务塞进导入者所属部门。
     bad_rows, warned, skipped_rows = [], [], []
     renamed = {}          # 原名 → 清理后的名称，供结果页说明
     dept_from_master = {}  # 主体公司 → 档案里的部门名（按档案归属的）
-    dept_fallback = {}     # 主体公司 → 行号（档案没挂部门，用了默认部门）
+    dept_missing = {}      # 主体公司 → 行号（档案没挂部门，归属留空待确认）
     # 同一「主体公司 + 归属部门 + 月份」的明细行先归堆，最后合成一条业务
     buckets, bucket_order = {}, []
 
@@ -312,7 +303,7 @@ def import_page():
         received = to_cents(cell("received_amount")) or 0
 
         # 部门优先级：表格里写了 → 按表格；没写 → 按客户档案里该主体公司的归属部门；
-        # 档案也没挂 → 才用页面选的默认部门（即导入人的部门），并在结果页说明。
+        # 档案也没挂 → 留空（待确认），不按导入人的部门兜底。
         dept_name = str(cell("dept_name") or "").strip()
         master = _master_customer(customer_name)
         if dept_name:
@@ -330,14 +321,8 @@ def import_page():
                 dept_id = master_dept_id
                 dept_from_master[customer_name] = dept_by_id.get(master_dept_id, "—")
             else:
-                dept_id = default_dept_id
-                dept_fallback.setdefault(customer_name, offset)
-        if not dept_id:
-            bad_rows.append({"row": offset, "customer": customer_name,
-                             "reason": "没有可用的归属部门：请在页面上选一个默认部门，"
-                                       "或让管理员给你的账号分配部门"})
-            continue
-
+                dept_id = None
+                dept_missing.setdefault(customer_name, offset)
         prepaid_mode = str(cell("prepaid_mode") or "").strip() or "后付"
         if prepaid_mode not in ("预存", "后付", "月结"):
             prepaid_mode = "后付"
@@ -507,12 +492,12 @@ def import_page():
                 item["customer_id"] = row["id"]
                 item["customer_name"] = customer_label(row, name)
             else:
-                # 新客户：客户名称与主体公司同时写入，并挂上这次导入的部门，
-                # 下次再导同一个主体公司就能自动带出归属部门
+                # 新客户：客户名称与主体公司同时写入，归属部门先留空，
+                # 待「客户档案」里确认后再导一次就会自动带出
                 cur = db.execute(
-                    "INSERT INTO customers (name, short_name, dept_id, created_by, created_at, updated_at) "
-                    "VALUES (?,?,?,?,?,?)",
-                    (name, name, default_dept_id, g.user["name"], now_text(), now_text()),
+                    "INSERT INTO customers (name, short_name, created_by, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?)",
+                    (name, name, g.user["name"], now_text(), now_text()),
                 )
                 item["customer_id"] = cur.lastrowid
 
@@ -547,11 +532,12 @@ def import_page():
             pairs = "、".join(f"{k}→{v}" for k, v in list(dept_from_master.items())[:8])
             more = f" 等 {len(dept_from_master)} 家" if len(dept_from_master) > 8 else ""
             notes.append(f"归属部门按客户档案里该主体公司的归属自动带出：{pairs}{more}")
-        if dept_fallback:
-            names = "、".join(list(dept_fallback.keys())[:8])
-            more = f" 等 {len(dept_fallback)} 家" if len(dept_fallback) > 8 else ""
-            notes.append(f"以下主体公司在客户档案里没有归属部门，已按你选的默认部门归入："
-                         f"{names}{more}。建议先去「客户档案」补上部门，下次导入就自动带出")
+        if dept_missing:
+            names = "、".join(list(dept_missing.keys())[:8])
+            more = f" 等 {len(dept_missing)} 家" if len(dept_missing) > 8 else ""
+            notes.append(f"以下主体公司在客户档案里没有归属部门，相关业务已按「归属部门待确认」保存："
+                         f"{names}{more}。请在业务详情里选择部门后才能提交进入收款，"
+                         f"或先到「客户档案」补上部门，下次导入就自动带出")
     if "biz_date" not in col_map:
         notes.append("文件里没有「月份」或「时间」列，记录落为当前月份")
     if "upstream_company" not in col_map:
@@ -578,8 +564,7 @@ def import_page():
         "header_row": header_row_idx + 1,
         "warned_rule": "Excel 里「公司实收」与系统计算结果不一致",
     }
-    return render_template("import.html", result=result, depts=depts,
-                           default_dept=default_dept_id)
+    return render_template("import.html", result=result, depts=depts)
 
 
 # ---------- 导出 ----------

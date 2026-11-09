@@ -404,7 +404,7 @@ def edit(record_id):
     if rec["owner_id"] != g.user["id"]:
         abort(403)
     if rec["status"] not in ("draft", "rejected"):
-        flash("只有草稿或已驳回的业务可以编辑", "error")
+        flash("只有在报批中或被驳回的业务可以编辑", "error")
         return redirect(url_for("records.detail", record_id=record_id))
 
     depts = _dept_options(g.user)
@@ -413,7 +413,8 @@ def edit(record_id):
         data, errors = _read_form(request.form, get_db(), rec=rec)
         if not _guard_dept(g.user, data["dept_id"]):
             errors.append("没有跨部门登记的权限")
-        if data["dept_id"] != rec["dept_id"]:
+        # 归属部门一经确认就锁定；原本留空的（待确认）允许这次补上
+        if rec["dept_id"] and data["dept_id"] != rec["dept_id"]:
             errors.append("不允许修改归属部门")
         if errors:
             for e in errors:
@@ -472,10 +473,13 @@ def detail(record_id):
 
     actions = {
         "can_edit": is_owner and rec["status"] in ("draft", "rejected"),
-        # 有删除权限的人可删任意状态；其他人只能删自己的草稿
+        # 有删除权限的人可删任意状态；其他人只能删自己的报批中单据
         "can_delete": has_perm(me, "record.delete")
                       or (is_owner and rec["status"] == "draft"),
-        "can_submit": is_owner and rec["status"] in ("draft", "rejected"),
+        # 归属部门没确认不能提交（否则收款的部门口径就是错的）
+        "can_submit": is_owner and rec["status"] in ("draft", "rejected")
+                      and bool(rec["dept_id"]),
+        "dept_pending": not rec["dept_id"],
         "can_withdraw": is_owner and rec["status"] == "pending_payment",
         # 收款：业务员本人 + 有收款权限的人（财务）
         "can_receive": can_receive_record(me, rec),
@@ -494,10 +498,68 @@ def detail(record_id):
         "record_detail.html", rec=rec, logs=logs, actions=actions,
         receipts=receipts, progress=receipt_progress(rec),
         suggestions=suggestions, ocr_status=ocr.status(),
+        dept_options=_dept_options(me),
     )
 
 
 # ---------- 流转 ----------
+
+@bp.route("/<int:record_id>/dept", methods=("POST",))
+@login_required
+def set_dept(record_id):
+    """确认归属部门。
+
+    导入时若客户档案里这家主体公司没挂部门，单据的归属部门留空（待确认），
+    必须在这里选好部门才能提交进入收款。确认后顺手回填客户档案，
+    下次导入同一主体公司就自动带出了。
+    """
+    rec = get_record_or_404(record_id)
+    is_owner = rec["owner_id"] == g.user["id"]
+    any_dept = has_perm(g.user, "record.create_any_dept")
+    if not (is_owner or any_dept):
+        abort(403)
+    back = redirect(url_for("records.detail", record_id=record_id))
+    if rec["dept_id"]:
+        flash("归属部门已确认，如需变更请联系管理员", "error")
+        return back
+
+    try:
+        dept_id = int(request.form.get("dept_id") or 0)
+    except (TypeError, ValueError):
+        dept_id = 0
+    db = get_db()
+    row = db.execute(
+        "SELECT id, name FROM departments WHERE id = ? AND is_active = 1", (dept_id,)
+    ).fetchone() if dept_id else None
+    if not row:
+        flash("请选择归属部门", "error")
+        return back
+    if not any_dept and dept_id != g.user["dept_id"]:
+        flash("没有跨部门权限，只能确认到你所属的部门", "error")
+        return back
+
+    db.execute("UPDATE records SET dept_id = ?, updated_at = ? WHERE id = ?",
+               (dept_id, now_text(), record_id))
+    _log(db, record_id, "dept", rec["status"], rec["status"],
+         f"确认归属部门：{row['name']}")
+
+    # 回填客户档案（仅当档案里这家还没挂部门时）
+    synced = False
+    if rec["customer_id"]:
+        cu = db.execute("SELECT id, dept_id FROM customers WHERE id = ?",
+                        (rec["customer_id"],)).fetchone()
+        if cu and not cu["dept_id"]:
+            db.execute("UPDATE customers SET dept_id = ?, updated_at = ? WHERE id = ?",
+                       (dept_id, now_text(), cu["id"]))
+            synced = True
+    db.commit()
+
+    msg = f"归属部门已确认为「{row['name']}」，可以提交进入收款了"
+    if synced:
+        msg += "；已同步写入客户档案，下次导入自动带出"
+    flash(msg, "ok")
+    return back
+
 
 @bp.route("/<int:record_id>/submit", methods=("POST",))
 @login_required
@@ -507,6 +569,9 @@ def submit(record_id):
         abort(403)
     if rec["status"] not in ("draft", "rejected"):
         flash("当前状态不能提交", "error")
+        return redirect(url_for("records.detail", record_id=record_id))
+    if not rec["dept_id"]:
+        flash("请先确认归属部门，再提交进入收款", "error")
         return redirect(url_for("records.detail", record_id=record_id))
 
     db = get_db()
@@ -525,7 +590,7 @@ def submit(record_id):
 @bp.route("/<int:record_id>/withdraw", methods=("POST",))
 @login_required
 def withdraw(record_id):
-    """业务员在收款前撤回，回到草稿可继续修改。"""
+    """业务员在收款前撤回，回到报批中可继续修改。"""
     rec = get_record_or_404(record_id)
     if rec["owner_id"] != g.user["id"]:
         abort(403)
@@ -775,9 +840,9 @@ def _purge_receipt_folder(record_id):
 @login_required
 def delete(record_id):
     rec = get_record_or_404(record_id)
-    # 有删除权限的人可删任意记录；其他人只能删自己的草稿
+    # 有删除权限的人可删任意记录；其他人只能删自己的报批中单据
     if not can_delete_record(g.user, rec):
-        flash("只有自己的草稿可以删除，其他情况请联系管理员", "error")
+        flash("只有自己的报批中单据可以删除，其他情况请联系管理员", "error")
         return redirect(url_for("records.detail", record_id=record_id))
 
     label = f"#{rec['id']} {rec['customer_name']}"
@@ -840,7 +905,7 @@ def batch_delete():
 @bp.route("/batch-submit", methods=("POST",))
 @login_required
 def batch_submit():
-    """批量提交：把勾选的草稿/已驳回单据一次性送进「待收款」。"""
+    """批量提交：把勾选的报批中/已驳回单据一次性送进「待收款」。"""
     ids = []
     for raw in request.form.getlist("ids"):
         try:
@@ -859,13 +924,18 @@ def batch_submit():
     db = get_db()
     marks = ",".join("?" * len(ids))
     rows = db.execute(
-        f"SELECT id, owner_id, status FROM records WHERE id IN ({marks})", ids
+        f"SELECT id, owner_id, status, dept_id FROM records WHERE id IN ({marks})", ids
     ).fetchall()
     allowed = [r for r in rows if r["owner_id"] == g.user["id"]
                and r["status"] in ("draft", "rejected")]
-    denied = len(rows) - len(allowed)
+    no_dept = [r for r in allowed if not r["dept_id"]]
+    allowed = [r for r in allowed if r["dept_id"]]
+    denied = len(rows) - len(allowed) - len(no_dept)
     if not allowed:
-        flash("选中的业务都不是你的待提交单据", "error")
+        if no_dept and not denied:
+            flash(f"选中的 {len(no_dept)} 条还没确认归属部门，请先在业务详情里选好部门", "error")
+        else:
+            flash("选中的业务都不是你的待提交单据", "error")
         return _back_to_list()
 
     for rec in allowed:
@@ -879,9 +949,11 @@ def batch_submit():
     db.commit()
 
     msg = f"已提交 {len(allowed)} 条，进入待收款"
+    if no_dept:
+        msg += f"，{len(no_dept)} 条因归属部门未确认被跳过"
     if denied:
-        msg += f"，{denied} 条不符合条件被跳过（只能提交自己的草稿/被退回单据）"
-    flash(msg, "ok" if not denied else "error")
+        msg += f"，{denied} 条不符合条件被跳过（只能提交自己的报批中/被退回单据）"
+    flash(msg, "ok" if not (denied or no_dept) else "error")
     return _back_to_list()
 
 
