@@ -83,7 +83,7 @@
                    {% if not may_manage %}disabled title="需要「维护 / 导入客户」权限"{% endif %}>
           </td>
           <td class="cust">{{ c.name }}</td>
-          <td>{{ c.short_name or '' }}</td>
+          <td>{% if c.short_name %}{{ c.short_name }}{% else %}<span style="color:var(--muted-2)">—</span>{% endif %}</td>
           <td>
             {{ c.contact or '' }}{% if c.phone %}
             <br><span style="color:var(--muted);font-size:12.5px">{{ c.phone }}</span>{% endif %}

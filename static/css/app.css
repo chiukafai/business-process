@@ -247,6 +247,9 @@ table.tbl tbody tr:hover { background: #fbfcfe; }
 table.tbl tbody tr.clickable { cursor: pointer; }
 table.tbl tbody tr.clickable:hover { background: var(--brand-50); }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 数字列表头跟随右对齐：table.tbl th 的 text-align:left 特异性更高，必须显式覆盖，
+   否则表头贴左、数字贴右，同列出现两条边线 */
+table.tbl th.num { text-align: right; }
 .neg { color: var(--danger); font-weight: 600; }
 .cust { font-weight: 550; color: var(--text); }
 
